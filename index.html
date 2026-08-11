@@ -1,0 +1,2724 @@
+<!doctype html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>Mój Mały Wszechświat</title>
+<meta name="description" content="Gra o budowaniu własnej planety. Zbieraj surowce, odblokowuj ziemię, leć dalej.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🪐</text></svg>">
+<style>
+/* ============================================================
+   STYLE — czyli jak to wygląda
+   ============================================================
+   Sama gra rysuje się na <canvas>. Wszystko inne (liczniki, przyciski,
+   panel ulepszeń) to zwykły HTML położony NA wierzchu. Tak jest o wiele
+   łatwiej niż rysować przyciski w canvasie — dostajesz za darmo
+   klikanie, zawijanie tekstu i działanie na każdym ekranie.
+   ============================================================ */
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+[hidden] { display: none !important; }
+
+:root {
+  --panel: rgba(12, 18, 30, 0.82);
+  --ramka: rgba(255, 255, 255, 0.14);
+  --zloto: #f2c14e;
+  --tekst: #eef3fa;
+}
+
+html, body {
+  height: 100%;
+  overflow: hidden;                 /* gra nigdy się nie przewija */
+  background: #060b14;
+  color: var(--tekst);
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  /* Bez tego dwuklik na telefonie zoomuje planszę zamiast grać. */
+  touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+#plotno { display: block; width: 100vw; height: 100vh; }
+
+/* --- warstwa HUD ------------------------------------------- */
+.hud {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;             /* klikamy "przez" HUD... */
+  padding: max(12px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right))
+           max(12px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left));
+}
+.hud button, .hud #dzojstik, .hud #sklep { pointer-events: auto; }  /* ...poza tym */
+
+.gora-lewo  { position: absolute; top: 12px; left: 12px; }
+.gora-prawo { position: absolute; top: 12px; right: 12px; text-align: right; }
+.dol-lewo   { position: absolute; bottom: 14px; left: 12px; }
+
+/* --- liczniki surowców -------------------------------------- */
+#zasoby { display: flex; flex-wrap: wrap; gap: 6px; max-width: 60vw; }
+
+
+.zasob {
+  display: flex; align-items: center; gap: 6px;
+  background: var(--panel);
+  border: 1px solid var(--ramka);
+  border-radius: 999px;
+  padding: 5px 12px 5px 8px;
+  font-variant-numeric: tabular-nums;   /* cyfry nie skaczą przy zmianie */
+  font-weight: 700;
+  font-size: 15px;
+  transition: transform .12s, background .2s;
+}
+.zasob .ikona { font-size: 17px; }
+.zasob.blysk {
+  background: rgba(242, 193, 78, 0.28);
+  transform: scale(1.12);
+}
+
+/* --- planeta + ikonki --------------------------------------- */
+.planeta {
+  background: var(--panel);
+  border: 1px solid var(--ramka);
+  border-radius: 12px;
+  padding: 7px 12px;
+  line-height: 1.35;
+  font-size: 14px;
+}
+.planeta b { display: block; font-size: 15px; }
+.planeta span { opacity: .72; font-size: 12px; }
+
+.ikonki { display: flex; gap: 6px; justify-content: flex-end; margin-top: 8px; }
+.ikonki button {
+  width: 42px; height: 42px;
+  font-size: 19px;
+  background: var(--panel);
+  border: 1px solid var(--ramka);
+  border-radius: 12px;
+  color: var(--tekst);
+  cursor: pointer;
+}
+.ikonki button:active { transform: scale(.92); }
+
+/* --- podpowiedź --------------------------------------------- */
+#podpowiedz {
+  position: absolute;
+  top: 14px; left: 50%;
+  transform: translateX(-50%);
+  background: var(--panel);
+  border: 1px solid var(--ramka);
+  border-radius: 999px;
+  padding: 8px 16px;
+  font-size: 14px;
+  font-weight: 600;
+  white-space: nowrap;
+  max-width: 90vw;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* Na wąskim ekranie podpowiedź wchodziłaby na liczniki — spychamy ją na dół. */
+@media (max-width: 780px) {
+  #podpowiedz {
+    top: auto; bottom: 88px;
+    font-size: 13px;
+    /* Jedna linijka z wielokropkiem ucina najważniejsze słowo zdania.
+       Na wąskim ekranie wolimy dwie linijki niż "podejdź do drz...". */
+    white-space: normal;
+    text-align: center;
+    max-width: calc(100vw - 32px);
+  }
+}
+
+/* --- pasek życia -------------------------------------------- */
+.zycie {
+  width: 168px; height: 14px;
+  background: rgba(0, 0, 0, .55);
+  border: 1px solid var(--ramka);
+  border-radius: 999px;
+  overflow: hidden;
+}
+#zycie-pasek {
+  height: 100%;
+  width: 100%;
+  background: #5ad46f;              /* kolor nadpisuje JS zależnie od HP */
+  transition: width .15s, background .25s;
+}
+
+/* --- przycisk "odblokuj ziemię" ----------------------------- */
+#przycisk-kup {
+  position: absolute;
+  bottom: 26px; left: 50%;
+  transform: translateX(-50%);
+  padding: 14px 26px;
+  font-size: 17px;
+  font-weight: 800;
+  color: #23180a;
+  background: linear-gradient(180deg, #ffd970, var(--zloto));
+  border: none;
+  border-radius: 14px;
+  box-shadow: 0 6px 0 #b58a25, 0 10px 22px rgba(0, 0, 0, .45);
+  cursor: pointer;
+  /* Pulsowanie przyciąga wzrok, ale animujemy TYLKO poświatę, nie rozmiar.
+     Przycisk zmieniający wielkość to ruchomy cel — wredne dla kogoś,
+     kto dopiero uczy się celować myszką. */
+  animation: puls 1.2s ease-in-out infinite;
+}
+#przycisk-kup:disabled {
+  background: rgba(70, 80, 95, .92);
+  color: rgba(255, 255, 255, .62);
+  box-shadow: none;
+  animation: none;
+  cursor: default;
+}
+#przycisk-kup:not(:disabled):active { transform: translateX(-50%) translateY(4px); box-shadow: 0 2px 0 #b58a25; }
+@keyframes puls {
+  50% { box-shadow: 0 6px 0 #b58a25, 0 0 0 10px rgba(242, 193, 78, .22), 0 10px 22px rgba(0, 0, 0, .45); }
+}
+
+/* --- gałka (dotyk) ------------------------------------------ */
+#dzojstik {
+  position: absolute;
+  right: 26px; bottom: 26px;
+  width: 128px; height: 128px;
+  border-radius: 50%;
+  /* Gałka musi być WYRAŹNIE widoczna. Ładna, ledwo majacząca poświata
+     wygląda świetnie na zrzucie ekranu i fatalnie na słońcu — a to jest
+     jedyny sposób sterowania na telefonie. */
+  background: rgba(10, 16, 28, .55);
+  border: 3px solid rgba(255, 255, 255, .45);
+  box-shadow: 0 4px 18px rgba(0, 0, 0, .5);
+  display: none;
+  place-items: center;
+}
+#galka {
+  width: 58px; height: 58px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, .8);
+  border: 2px solid #fff;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, .45);
+}
+#dzojstik.aktywny { background: rgba(30, 45, 70, .7); }
+
+/* Klasę `dotyk` nadaje JS (patrz js/wejscie.js) — na telefonie i tablecie,
+   a nie na laptopie z myszką. Na dotyku gałka zajmuje prawy dolny róg,
+   więc przycisk "Odblokuj" musi się przesunąć w lewo, żeby nie wpaść
+   pod kciuk sterujący bohaterem. */
+body.dotyk #dzojstik { display: grid; }
+/* Gałka zajmuje dolny pas ekranu — podpowiedź musi wylądować nad nią,
+   inaczej połowa zdania chowa się pod kciukiem. */
+body.dotyk #podpowiedz { bottom: 172px; }
+body.dotyk #przycisk-kup { left: 20px; transform: none; bottom: 34px; }
+body.dotyk #przycisk-kup:not(:disabled):active { transform: translateY(4px); }
+
+/* --- sklep --------------------------------------------------- */
+#sklep {
+  position: absolute;
+  /* Musi zaczynać się PONIŻEJ rzędu ikonek, bo inaczej przykrywa własny
+     przycisk otwierania — i nie da się go już zamknąć. */
+  top: 132px; right: 12px;
+  width: min(320px, calc(100vw - 24px));
+  background: var(--panel);
+  backdrop-filter: blur(6px);
+  border: 1px solid var(--ramka);
+  border-radius: 16px;
+  padding: 14px;
+}
+#sklep h2 { font-size: 16px; margin-bottom: 10px; display: flex; align-items: center; justify-content: space-between; }
+#zamknij-sklep {
+  width: 30px; height: 30px;
+  font-size: 14px;
+  background: rgba(255, 255, 255, .1);
+  border: none; border-radius: 8px;
+  color: var(--tekst);
+  cursor: pointer;
+}
+.sklep-stopka { margin-top: 10px; font-size: 12px; opacity: .62; line-height: 1.5; }
+
+.ulepszenie {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 0;
+  border-top: 1px solid rgba(255, 255, 255, .08);
+}
+.ulepszenie:first-child { border-top: none; }
+.u-ikona { font-size: 24px; }
+.u-opis { display: flex; flex-direction: column; flex: 1; line-height: 1.3; }
+.u-opis b { font-size: 14px; }
+.u-poziom { font-size: 12px; color: var(--zloto); }
+.u-moc { font-size: 11px; opacity: .6; }
+
+.ulepszenie button {
+  min-width: 78px;
+  padding: 9px 10px;
+  font-size: 13px;
+  font-weight: 700;
+  color: #23180a;
+  background: var(--zloto);
+  border: none;
+  border-radius: 10px;
+  cursor: pointer;
+}
+.ulepszenie button:disabled { background: rgba(255, 255, 255, .13); color: rgba(255, 255, 255, .45); cursor: default; }
+
+/* --- ekran startowy / portal --------------------------------- */
+#ekran {
+  position: fixed; inset: 0;
+  display: grid; place-items: center;
+  background: rgba(4, 8, 16, .8);
+  backdrop-filter: blur(4px);
+  z-index: 10;
+  padding: 20px;
+}
+.okno {
+  max-width: 520px;
+  text-align: center;
+  background: #101a2b;
+  border: 1px solid var(--ramka);
+  border-radius: 20px;
+  padding: 30px 26px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, .6);
+}
+.okno h1 { font-size: 26px; margin-bottom: 12px; }
+.okno p { font-size: 15px; line-height: 1.65; opacity: .88; margin-bottom: 22px; }
+/* Trzy krótkie linijki z ikoną zamiast akapitu. Pięciolatek nie przeczyta
+   akapitu, ale ikonę i cztery słowa ogarnie — albo ogarnie za niego rodzic
+   w dwie sekundy zamiast w trzydzieści. */
+.okno .jak { display: block; margin: 6px 0; font-size: 15px; }
+/* Celujemy w KONKRETNY przycisk, nie w "każdy button w oknie". Ta reguła
+   obejmowała też przyciski wyboru trudności i — przez wyższą specyficzność
+   niż `.trudnosc` — malowała je wszystkie na złoto. Wychodziło dokładnie
+   na odwrót: niewybrane poziomy świeciły, a wybrany wyglądał na wyłączony. */
+#ekran-dalej {
+  padding: 14px 40px;
+  font-size: 18px;
+  font-weight: 800;
+  color: #23180a;
+  background: linear-gradient(180deg, #ffd970, var(--zloto));
+  border: none;
+  border-radius: 14px;
+  box-shadow: 0 6px 0 #b58a25;
+  cursor: pointer;
+}
+#ekran-dalej:active { transform: translateY(4px); box-shadow: 0 2px 0 #b58a25; }
+.okno small { display: block; margin-top: 16px; font-size: 12px; opacity: .5; }
+
+/* --- wybór poziomu trudności -------------------------------- */
+#wybor-trudnosci { display: flex; gap: 10px; justify-content: center; margin-bottom: 22px; }
+.trudnosc {
+  flex: 1;
+  max-width: 130px;
+  display: flex; flex-direction: column; align-items: center; gap: 4px;
+  padding: 12px 6px;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--tekst);
+  background: rgba(255, 255, 255, .07);
+  border: 2px solid transparent;
+  border-radius: 14px;
+  cursor: pointer;
+}
+.trudnosc .t-ikona { font-size: 30px; line-height: 1; }
+/* Wybrany poziom musi być widoczny bez czytania — stąd i ramka, i tło.
+   Sam kolor tekstu odpadał: dzieciak nie porównuje odcieni szarości. */
+.trudnosc.wybrany { border-color: var(--zloto); background: rgba(242, 193, 78, .18); }
+
+/* ============================================================
+   MAŁE EKRANY — na końcu pliku!
+   Przy równej "sile" selektorów CSS wygrywa ten NIŻEJ w pliku.
+   Ten blok stał kiedyś wyżej i po cichu nie działał: telefon czytał
+   go poprawnie, a dwie linijki dalej reguła bazowa nadpisywała go
+   z powrotem. Klasyczna pułapka.
+   ============================================================ */
+/* Na wąskim ekranie cztery liczniki muszą zmieścić się w jednym rzędzie,
+   inaczej zawijają się pod nazwę planety i robi się kotłowanina. */
+@media (max-width: 560px) {
+  #zasoby { gap: 4px; max-width: 58vw; }
+  .zasob { padding: 4px 8px 4px 6px; font-size: 13px; gap: 3px; }
+  .zasob .ikona { font-size: 14px; }
+  .planeta { padding: 5px 9px; }
+  .planeta b { font-size: 13px; }
+  .ikonki button { width: 38px; height: 38px; font-size: 17px; }
+}
+
+/* Kto poprosił system o mniej ruchu, ten dostaje mniej ruchu.
+   Przycisk nadal się wyróżnia — kolorem, nie pulsowaniem. */
+@media (prefers-reduced-motion: reduce) {
+  #przycisk-kup { animation: none; }
+  .zasob, #zycie-pasek, .ikonki button { transition: none; }
+}
+
+</style>
+</head>
+<body>
+
+<canvas id="plotno"></canvas>
+
+<!-- HUD: wszystko, co leży NA grze. Domyślnie przepuszcza kliknięcia
+     (pointer-events: none), a łapią je tylko konkretne przyciski. -->
+<div class="hud">
+
+  <div class="gora-lewo">
+    <div id="zasoby"></div>
+  </div>
+
+  <div class="gora-prawo">
+    <div class="planeta">
+      <b id="nazwa-planety">—</b>
+      <span id="postep-kafli">0/0</span>
+    </div>
+    <div class="ikonki">
+      <button type="button" id="przycisk-sklep" title="Ulepszenia">🛠️</button>
+      <button type="button" id="przycisk-dzwiek" title="Dźwięk">🔊</button>
+      <button type="button" id="przycisk-reset" title="Zacznij od nowa">♻️</button>
+    </div>
+  </div>
+
+  <div id="podpowiedz"></div>
+
+  <div class="dol-lewo">
+    <div class="zycie"><div id="zycie-pasek"></div></div>
+  </div>
+
+  <button type="button" id="przycisk-kup" hidden></button>
+
+  <!-- Gałka pojawia się tylko na ekranach dotykowych (patrz style.css) -->
+  <div id="dzojstik"><div id="galka"></div></div>
+
+  <div id="sklep" hidden>
+    <h2>🛠️ Ulepszenia <button type="button" id="zamknij-sklep" title="Zamknij">✕</button></h2>
+    <div id="lista-ulepszen"></div>
+    <p class="sklep-stopka">Mocniejsze narzędzie = szybsze kopanie.<br>Kilof poz. 2 otwiera złoto, poz. 3 — kryształy.</p>
+  </div>
+</div>
+
+<div id="ekran" hidden>
+  <div class="okno">
+    <h1></h1>
+    <p></p>
+    <div id="wybor-trudnosci" hidden></div>
+    <!-- id, nie querySelector('button'): od kiedy nad spodem okna stoi wybór
+         trudności, "pierwszy przycisk w oknie" to już nie ten przycisk. -->
+    <button type="button" id="ekran-dalej"></button>
+    <small>WSAD / strzałki — chodzenie &nbsp;•&nbsp; Spacja — odblokuj ziemię</small>
+  </div>
+</div>
+
+<!-- Kolejność ma znaczenie: gra.js na końcu, bo od razu się uruchamia
+     i potrzebuje wszystkich pozostałych plików już wczytanych. -->
+<script>
+/* ---------- js/ustawienia.js ---------- */
+/* ============================================================
+   USTAWIENIA — TU SIĘ BAWISZ
+   ============================================================
+   To jedyny plik, który musisz zrozumieć, żeby zmienić grę.
+   Zmień liczbę, zapisz plik (Ctrl+S), odśwież grę w przeglądarce (F5).
+   Coś się zepsuje? Wciśnij Ctrl+Z. Nic się nie stanie. Serio.
+
+   Podpowiedź: gra pamięta postęp. Jeśli zmienisz coś dużego
+   (np. rozmiar planety), kliknij "Od nowa" w grze.
+   ============================================================ */
+
+const USTAWIENIA = {
+
+  // --- BOHATER -------------------------------------------------
+  gracz: {
+    predkosc: 230,      // px na sekundę. Ustaw 600 i zobacz, co się stanie :)
+    promien: 15,        // jak duży jest ludzik
+    maxZycie: 100,
+    regenZycia: 4,      // ile życia wraca na sekundę...
+    regenPo: 2.5,       // ...jeśli od tylu sekund nikt Cię nie uderzył
+    zasiegKopania: 48,  // jak blisko trzeba stanąć, żeby kopać
+    zasiegMiecza: 52,
+  },
+
+  // --- NARZĘDZIA ----------------------------------------------
+  // obrazenia = bazowe + naPoziom * (poziom - 1)
+  // tempo     = ile uderzeń na sekundę
+  // bonusLupu = ile WIĘCEJ surowca leci z rozbicia za każdy poziom powyżej 1
+  //
+  // Ten `bonusLupu` to sedno rozwoju postaci. Kiedyś lepsze narzędzie tylko
+  // szybciej rozbijało — czyli postęp był niewidoczny, bo licznik surowców
+  // rósł tak samo. Teraz mocniejszy kilof sypie realnie większą kupą kamienia
+  // i widać to gołym okiem po jednym uderzeniu.
+  narzedzia: {
+    siekiera: { nazwa: 'Siekiera', ikona: '🪓', bazowe: 7,  naPoziom: 3, tempo: 4.0, bonusLupu: 2, maxPoziom: 5 },
+    kilof:    { nazwa: 'Kilof',    ikona: '⛏️', bazowe: 7,  naPoziom: 4, tempo: 3.6, bonusLupu: 2, maxPoziom: 5 },
+    miecz:    { nazwa: 'Miecz',    ikona: '⚔️', bazowe: 12, naPoziom: 9, tempo: 2.6, bonusLupu: 0, maxPoziom: 5 },
+  },
+
+  // Cena ulepszenia narzędzia z poziomu `p` na `p+1`.
+  // To jest FUNKCJA, nie liczba — dlatego ceny rosną same.
+  cenaUlepszenia(poziom) {
+    return {
+      drewno: 20 * poziom,
+      kamien: 14 * poziom,
+      zloto: poziom >= 2 ? 6 * (poziom - 1) : 0,
+    };
+  },
+
+  // --- ZASOBY --------------------------------------------------
+  // Kolejność tutaj = kolejność pasków na górze ekranu.
+  zasoby: {
+    drewno:   { nazwa: 'Drewno',   ikona: '🪵', kolor: '#b5793a' },
+    kamien:   { nazwa: 'Kamień',   ikona: '🪨', kolor: '#9aa3ad' },
+    zloto:    { nazwa: 'Złoto',    ikona: '🪙', kolor: '#f2c14e' },
+    krysztal: { nazwa: 'Kryształ', ikona: '💎', kolor: '#8f6ff5' },
+  },
+
+  // --- ZŁOŻA (to, co się rozwala) ------------------------------
+  // narzedzie      – czym trzeba w to walić
+  // minPoziom      – od jakiego poziomu narzędzia to działa (bramka progresji)
+  // zycie          – ile obrażeń trzeba wbić
+  // lupNaCios      – ile surowca leci przy KAŻDYM uderzeniu
+  // lupZaRozbicie  – premia w momencie rozwalenia (rośnie z poziomem narzędzia)
+  // odrasta        – po ilu sekundach złoże wraca
+  //
+  // `lupNaCios` jest tu najważniejszy i wcale nie chodzi o liczby. Wcześniej
+  // surowiec leciał WYŁĄCZNIE przy rozbiciu, czyli nagroda przychodziła raz na
+  // trzy sekundy, a pomiędzy nimi gracz stał i patrzył na malejący pasek.
+  // Teraz coś dobrego dzieje się przy każdym machnięciu. To jest cała różnica
+  // między "gra jest ospała" a "nie mogę przestać".
+  //
+  // Życie dobrane tak, żeby rozbicie brało ~4 ciosy na poziomie 1 i ~2 na 5 —
+  // nigdy jednego, bo przy jednym ciosie znika rytm walenia.
+  zloza: {
+    drzewo: {
+      nazwa: 'Drzewo', narzedzie: 'siekiera', minPoziom: 1,
+      zasob: 'drewno', zycie: 28, lupNaCios: 1, lupZaRozbicie: 4, odrasta: 6, promien: 20,
+    },
+    skala: {
+      nazwa: 'Skała', narzedzie: 'kilof', minPoziom: 1,
+      zasob: 'kamien', zycie: 28, lupNaCios: 1, lupZaRozbicie: 4, odrasta: 7, promien: 22,
+    },
+    zyla: {
+      nazwa: 'Żyła złota', narzedzie: 'kilof', minPoziom: 2,
+      zasob: 'zloto', zycie: 48, lupNaCios: 1, lupZaRozbicie: 3, odrasta: 10, promien: 22,
+    },
+    krysztal: {
+      nazwa: 'Kryształ', narzedzie: 'kilof', minPoziom: 3,
+      zasob: 'krysztal', zycie: 60, lupNaCios: 1, lupZaRozbicie: 2, odrasta: 12, promien: 21,
+    },
+  },
+
+  // --- POZIOM TRUDNOŚCI ---------------------------------------
+  // Mnożniki nakładane na wrogów w chwili ich tworzenia. Wybór jest na
+  // ekranie startowym, bo 5-latek i dorosły potrzebują innej gry — a jedna
+  // wspólna wartość zawsze będzie dla kogoś nudna albo nie do przejścia.
+  trudnosc: {
+    latwy:    { nazwa: 'Łatwy',    ikona: '🙂', zycieWrogow: 0.6, obrazeniaWrogow: 0.4, predkoscWrogow: 0.8,  regenGracza: 2   },
+    normalny: { nazwa: 'Normalny', ikona: '😐', zycieWrogow: 1,   obrazeniaWrogow: 1,   predkoscWrogow: 1,    regenGracza: 1   },
+    trudny:   { nazwa: 'Trudny',   ikona: '😈', zycieWrogow: 1.6, obrazeniaWrogow: 1.8, predkoscWrogow: 1.25, regenGracza: 0.6 },
+  },
+
+  // --- WROGOWIE ------------------------------------------------
+  // naPlanete = o ile mocniejszy robi się wróg z każdą kolejną planetą.
+  //
+  // Szlam biegał 78 px/s przy graczu robiącym 230 — czyli nie miał żadnych
+  // szans kogokolwiek dogonić i gracz w ogóle nie zauważał, że w grze są
+  // przeciwnicy. Teraz dogoni, jeśli będziesz stał i rąbał.
+  szlam: {
+    zycie: 55,
+    predkosc: 115,
+    obrazenia: 10,
+    coIleBije: 1.0,      // sekundy między jego ciosami
+    zasiegPogoni: 300,   // z jakiej odległości Cię zauważy
+    lupZloto: 2,
+    odrasta: 18,         // po ilu sekundach wraca nowy szlam
+    promien: 17,
+    naPlanete: 0.35,
+  },
+
+  // Boss śpi przy portalu i budzi się, gdy wykupisz całą planetę.
+  // Dopóki żyje, portal nie działa. To jest kulminacja planety — bez niego
+  // ostatni kafel kupowało się i gra po prostu mówiła "pa".
+  boss: {
+    zycie: 260,
+    predkosc: 100,
+    obrazenia: 18,
+    coIleBije: 1.3,
+    zasiegPogoni: 99999,  // raz obudzony, nie odpuszcza
+    lupZloto: 40,
+    odrasta: 0,           // 0 = nie wraca; bossa zabija się raz
+    promien: 44,
+    naPlanete: 0.55,
+  },
+
+  // --- PLANETY -------------------------------------------------
+  // Chcesz szóstą planetę? Skopiuj jeden blok { ... } i zmień kolory.
+  // Gra sama ją obsłuży — nie musisz ruszać nic więcej. Naprawdę.
+  //
+  // `siatka: 3` to 3x3 = 9 kafli, czyli 8 do kupienia. Wcześniej było 5x5,
+  // czyli 24 kafle — i po piątym ten sam rytuał przestawał cokolwiek znaczyć.
+  // Lepiej pięć krótkich planet niż trzy długie: nowa planeta to nowy kolor,
+  // nowy surowiec i nowy potwór, czyli zastrzyk ciekawości co dwie minuty.
+  planety: [
+    {
+      nazwa: 'Zielona Polana',
+      siatka: 3,
+      niebo: '#0a1424',
+      ziemia: ['#3f8f4d', '#378044'],  // dwa odcienie = szachownica
+      obwodka: '#2c6537',
+      zloza: { drzewo: 6, skala: 4, zyla: 1, krysztal: 0 },  // średnio na kafel
+      wrogowie: 1,
+    },
+    {
+      nazwa: 'Rdzawe Pustkowie',
+      siatka: 3,
+      niebo: '#1b0d10',
+      ziemia: ['#a95638', '#9a4c31'],
+      obwodka: '#7a3a25',
+      zloza: { drzewo: 4, skala: 5, zyla: 3, krysztal: 0 },
+      wrogowie: 2,
+    },
+    {
+      nazwa: 'Lodowy Księżyc',
+      siatka: 3,
+      niebo: '#08131f',
+      ziemia: ['#7fb4d6', '#6fa5c9'],
+      obwodka: '#4d84a5',
+      zloza: { drzewo: 3, skala: 5, zyla: 3, krysztal: 3 },
+      wrogowie: 2,
+    },
+    {
+      nazwa: 'Grzybowy Las',
+      siatka: 3,
+      niebo: '#150c22',
+      ziemia: ['#6b4a9e', '#5f4090'],
+      obwodka: '#4a3070',
+      zloza: { drzewo: 5, skala: 4, zyla: 3, krysztal: 3 },
+      wrogowie: 3,
+    },
+    {
+      nazwa: 'Wulkaniczne Serce',
+      siatka: 3,
+      niebo: '#1a0705',
+      ziemia: ['#8c2f22', '#7a281d'],
+      obwodka: '#5e1c13',
+      zloza: { drzewo: 3, skala: 6, zyla: 4, krysztal: 4 },
+      wrogowie: 3,
+    },
+  ],
+
+  // --- SOCZYSTOŚĆ ----------------------------------------------
+  // Rzeczy, które nie zmieniają zasad gry ani o jotę, a decydują o tym,
+  // czy uderzenie "ma moc". Wyłącz je (ustaw 0) i zagraj — różnica jest
+  // zaskakująco duża jak na dwie liczby.
+  hitStop: 0.05,   // na tyle sekund świat zamiera w chwili rozbicia złoża
+  lotLupu: 0.45,   // ile sekund surowiec leci z ziemi do licznika u góry
+
+  // --- ŚWIAT ---------------------------------------------------
+  kafel: 320,   // px — rozmiar jednego kafla ziemi
+
+  // Kafel startowy dostaje TYLE RAZY tyle złóż, co zwykły kafel tej planety —
+  // ale zawsze co najmniej po jednym z każdego rodzaju, jaki na niej występuje.
+  //
+  // To nie jest kosmetyka, tylko zabezpieczenie przed zakleszczeniem gry.
+  // Kiedyś stała tu sztywna lista "4 drzewa, 3 skały". Gdy ceny kafli zaczęły
+  // zależeć od planety, na trzeciej planecie pierwszy kafel kosztował złoto
+  // i kryształ — a na kaflu startowym rosły wyłącznie drzewa i skały.
+  // Gracz lądował w miejscu, z którego NIE DA SIĘ kupić niczego. Wyliczanie
+  // składu ze składu planety sprawia, że taki błąd nie może już wrócić.
+  startoweZloza: 0.7,
+
+  // Cena odblokowania kafla.
+  //
+  // Który surowiec jest w ogóle potrzebny, decyduje NUMER PLANETY, nie
+  // odległość od środka. Wcześniej złoto i kryształ były bramkowane przez
+  // `pierscien >= 2`, ale na siatce 3x3 pierścień 2 nie istnieje — te dwa
+  // surowce przestałyby być do czegokolwiek potrzebne. Przy okazji model
+  // zrobił się czytelniejszy: "na tej planecie ziemia kosztuje to i to",
+  // jednakowo dla każdego kafla.
+  //
+  //   planeta 1: drewno + kamień          planeta 3: + kryształ (kilof poz. 3)
+  //   planeta 2: + złoto (kilof poz. 2)   planety 4-5: wszystko, drożej
+  cenaKafla(pierscien, planeta) {
+    const m = (0.85 + planeta * 0.12) * (0.8 + 0.2 * pierscien);
+    return {
+      drewno:   Math.round(30 * m),
+      kamien:   Math.round(22 * m),
+      zloto:    planeta >= 1 ? Math.round(14 * m) : 0,
+      krysztal: planeta >= 2 ? Math.round(6 * m) : 0,
+    };
+  },
+};
+
+</script>
+<script>
+/* ---------- js/dzwiek.js ---------- */
+/* ============================================================
+   DŹWIĘK — bez ani jednego pliku audio
+   ============================================================
+   Nie mamy żadnego mp3. Generujemy dźwięki na żywo: bierzemy falę
+   o zadanej częstotliwości (wysokości) i szybko ją wyciszamy.
+   440 Hz to dźwięk "a". Dwa razy więcej herców = dźwięk o oktawę wyżej.
+
+   Przeglądarka NIE POZWOLI odtworzyć dźwięku, dopóki użytkownik czegoś
+   nie kliknie. To nie błąd, to zabezpieczenie przed samogrającymi
+   reklamami. Dlatego budzimy dźwięk dopiero przy pierwszym kliknięciu.
+   ============================================================ */
+
+let audio = null;
+let dzwiekWlaczony = true;
+
+function obudzDzwiek() {
+  if (!audio) {
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (AC) audio = new AC();
+  }
+  if (audio && audio.state === 'suspended') audio.resume();
+}
+
+const PRZEPIS = {
+  stuk:   { fala: 'square',   od: 220, do: 90,  czas: 0.07, glosnosc: 0.05 },
+  ciecie: { fala: 'sawtooth', od: 620, do: 180, czas: 0.10, glosnosc: 0.05 },
+  lup:    { fala: 'triangle', od: 660, do: 1180, czas: 0.16, glosnosc: 0.09 },
+  auc:    { fala: 'square',   od: 180, do: 60,  czas: 0.20, glosnosc: 0.08 },
+  kup:    { fala: 'triangle', od: 440, do: 880, czas: 0.30, glosnosc: 0.11 },
+  portal: { fala: 'sine',     od: 300, do: 1400, czas: 0.65, glosnosc: 0.12 },
+};
+
+function dzwiek(nazwa) {
+  if (!dzwiekWlaczony || !audio) return;
+  const p = PRZEPIS[nazwa];
+  if (!p) return;
+
+  const teraz = audio.currentTime;
+  const oscylator = audio.createOscillator();   // źródło fali
+  const glosnosc = audio.createGain();          // "pokrętło głośności"
+
+  oscylator.type = p.fala;
+  oscylator.frequency.setValueAtTime(p.od, teraz);
+  oscylator.frequency.exponentialRampToValueAtTime(p.do, teraz + p.czas);
+
+  // Ścinamy głośność do zera. Bez tego każdy dźwięk kończyłby się
+  // trzaskiem — ucho nie znosi nagłego ucięcia fali w połowie.
+  glosnosc.gain.setValueAtTime(p.glosnosc, teraz);
+  glosnosc.gain.exponentialRampToValueAtTime(0.0001, teraz + p.czas);
+
+  oscylator.connect(glosnosc).connect(audio.destination);
+  oscylator.start(teraz);
+  oscylator.stop(teraz + p.czas + 0.02);
+}
+
+</script>
+<script>
+/* ---------- js/swiat.js ---------- */
+/* ============================================================
+   ŚWIAT — kafle ziemi i złoża
+   ============================================================
+   Świat NIE jest zapisywany na dysku. Zapisujemy tylko ziarno (seed)
+   i listę odblokowanych kafli, a cała reszta jest LICZONA OD NOWA
+   przy każdym wejściu do gry.
+
+   Dlaczego? Bo "losowo, ale zawsze tak samo" to jedna z najfajniejszych
+   sztuczek w gamedevie. Z tego samego ziarna zawsze wychodzi ta sama
+   planeta — dlatego drzewa nie skaczą po kaflach po odświeżeniu strony.
+   ============================================================ */
+
+/* Mulberry32 — mikroskopijny generator liczb pseudolosowych.
+   Math.random() nie przyjmuje ziarna, więc nie da się go powtórzyć.
+   Ten przyjmuje. Zwraca funkcję dającą liczby 0..1. */
+function losowarka(ziarno) {
+  let a = ziarno >>> 0;
+  return function () {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+/* Pierścień = odległość kafla od środka planety.
+   Środek to 0, kafle wokół niego to 1, następna warstwa to 2... */
+function pierscien(kx, ky) {
+  return Math.max(Math.abs(kx), Math.abs(ky));
+}
+
+function kluczKafla(kx, ky) {
+  return kx + ',' + ky;
+}
+
+/* Buduje całą planetę: kafle + złoża na nich.
+   `odblokowane` to obiekt { "0,0": true, ... } z zapisu gry. */
+function zbudujPlanete(numer, odblokowane) {
+  const cfg = USTAWIENIA.planety[numer];
+  const K = USTAWIENIA.kafel;
+  const zasieg = Math.floor(cfg.siatka / 2);   // dla siatki 5 -> od -2 do 2
+
+  const kafle = new Map();
+
+  for (let ky = -zasieg; ky <= zasieg; ky++) {
+    for (let kx = -zasieg; kx <= zasieg; kx++) {
+      const p = pierscien(kx, ky);
+      const klucz = kluczKafla(kx, ky);
+
+      const kafel = {
+        kx, ky, klucz, pierscien: p,
+        // lewy górny róg kafla w pikselach świata
+        x: kx * K, y: ky * K,
+        odblokowany: p === 0 || !!odblokowane[klucz],   // środek jest darmowy
+        cena: p === 0 ? null : USTAWIENIA.cenaKafla(p, numer),
+        zloza: [],
+      };
+
+      if (p > 0) rozsiejZloza(kafel, numer, cfg);
+      kafle.set(klucz, kafel);
+    }
+  }
+
+  // Kafel startowy dostaje własny, skromniejszy zestaw — żeby było czym
+  // zacząć, ale za mało, żeby dało się tam siedzieć całą grę.
+  // `omijaj` chroni środek: bez tego los potrafi postawić skałę dokładnie
+  // na portalu — a skały mają kolizję, więc portal robi się nie do wejścia.
+  const start = kafle.get('0,0');
+  rozsiejZloza(start, numer,
+    { zloza: mieszankaStartowa(cfg) },
+    { x: K * 0.5, y: K * 0.5, promien: 78 });
+
+  const swiat = {
+    numer, cfg, kafle, zasieg,
+    // Wrogowie w jednej płaskiej liście, nie po kaflach — bo się ruszają
+    // i potrafią przejść na sąsiedni kafel. Jest ich kilkadziesiąt,
+    // więc przejechanie całej listy co klatkę nic nie kosztuje.
+    wrogowie: [],
+    // granice świata w pikselach (do trzymania kamery w ryzach)
+    minX: -zasieg * K, maxX: (zasieg + 1) * K,
+    minY: -zasieg * K, maxY: (zasieg + 1) * K,
+    // Portal stoi w środku planety. Widać go od pierwszej sekundy,
+    // żeby było jasne, po co się w ogóle męczysz.
+    portal: { x: K * 0.5, y: K * 0.5, promien: 34, obrot: 0 },
+  };
+
+  // Kafle wczytane z zapisu też muszą dostać swoje szlamy.
+  for (const kafel of swiat.kafle.values()) {
+    if (kafel.odblokowany) zaludnij(swiat, kafel);
+  }
+  stworzBossa(swiat);
+  return swiat;
+}
+
+/* Skład kafla startowego: ułamek składu planety, ale minimum jeden z każdego
+   rodzaju, jaki na tej planecie w ogóle występuje. To drugie jest ważniejsze
+   od pierwszego — gwarantuje, że każdy surowiec potrzebny do kupna pierwszego
+   kafla da się zdobyć bez kupowania kafla. */
+function mieszankaStartowa(cfg) {
+  const mix = {};
+  for (const typ in cfg.zloza) {
+    if (cfg.zloza[typ] > 0) mix[typ] = Math.max(1, Math.round(cfg.zloza[typ] * USTAWIENIA.startoweZloza));
+  }
+  return mix;
+}
+
+/* Rozstawia złoża na kaflu. Odsuwa je od krawędzi i od siebie,
+   żeby nie powstała kupa nachodzących na siebie kamieni. */
+function rozsiejZloza(kafel, numerPlanety, cfg, omijaj) {
+  const K = USTAWIENIA.kafel;
+  // Ziarno z pozycji kafla: ten sam kafel = zawsze ten sam układ złóż.
+  const rnd = losowarka(numerPlanety * 99991 + (kafel.kx + 50) * 733 + (kafel.ky + 50) * 37);
+  const margines = 52;
+
+  for (const typ in cfg.zloza) {
+    const ile = cfg.zloza[typ];
+    for (let i = 0; i < ile; i++) {
+      const def = USTAWIENIA.zloza[typ];
+      let x = 0, y = 0, wolne = false;
+
+      const zDalaOdPortalu = (x, y) =>
+        !omijaj || odleglosc(omijaj.x, omijaj.y, x, y) > omijaj.promien + def.promien;
+
+      // 20 prób na miejsce, które nie nachodzi na sąsiadów.
+      for (let proba = 0; proba < 20 && !wolne; proba++) {
+        x = kafel.x + margines + rnd() * (K - margines * 2);
+        y = kafel.y + margines + rnd() * (K - margines * 2);
+        wolne = kafel.zloza.every(z => odleglosc(z.x, z.y, x, y) > z.promien + def.promien + 18)
+             && zDalaOdPortalu(x, y);
+      }
+
+      // Nie udało się? Stawiamy mimo ciasnoty. Wygląda odrobinę gorzej,
+      // ale POMINIĘCIE złoża jest znacznie gorsze: gdyby na kaflu startowym
+      // przepadła jedyna skała, gracz nie miałby skąd wziąć kamienia
+      // na pierwszy kafel i utknąłby na zawsze. Brzydko > nie do przejścia.
+      for (let proba = 0; proba < 30 && !wolne; proba++) {
+        x = kafel.x + margines + rnd() * (K - margines * 2);
+        y = kafel.y + margines + rnd() * (K - margines * 2);
+        wolne = zDalaOdPortalu(x, y);
+      }
+      if (!wolne) continue;
+
+      kafel.zloza.push({
+        zlozem: true,   // jawny znacznik — patrz komentarz przy `rysuj`
+        typ, def, x, y,
+        promien: def.promien,
+        zycie: def.zycie,
+        maxZycie: def.zycie,
+        wykopane: false,
+        wracaZa: 0,
+        drzenie: 0,              // do animacji "trafione!"
+        obrot: rnd() * Math.PI * 2,
+      });
+    }
+  }
+}
+
+/* Który kafel leży pod punktem (x, y) świata. Może zwrócić undefined. */
+function kafelPod(swiat, x, y) {
+  const K = USTAWIENIA.kafel;
+  return swiat.kafle.get(kluczKafla(Math.floor(x / K), Math.floor(y / K)));
+}
+
+function odblokowanyPod(swiat, x, y) {
+  const k = kafelPod(swiat, x, y);
+  return !!(k && k.odblokowany);
+}
+
+/* Kafle, które MOŻNA kupić: zablokowane, ale sąsiadujące z odblokowanym.
+   Bez tego dałoby się kupić kafel po drugiej stronie planety. */
+function kupowalne(swiat) {
+  const lista = [];
+  for (const kafel of swiat.kafle.values()) {
+    if (kafel.odblokowany) continue;
+    const sasiedzi = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+    const styka = sasiedzi.some(([dx, dy]) => {
+      const s = swiat.kafle.get(kluczKafla(kafel.kx + dx, kafel.ky + dy));
+      return s && s.odblokowany;
+    });
+    if (styka) lista.push(kafel);
+  }
+  return lista;
+}
+
+function odleglosc(x1, y1, x2, y2) {
+  return Math.hypot(x2 - x1, y2 - y1);
+}
+
+</script>
+<script>
+/* ---------- js/wejscie.js ---------- */
+/* ============================================================
+   WEJŚCIE — klawiatura i dotyk
+   ============================================================
+   Reszta gry pyta tylko o jedno: `wejscie.kierunek()`, czyli
+   "w którą stronę ma iść ludzik". Czy odpowiedź bierze się z WSAD,
+   ze strzałek, czy z palca na ekranie — nikogo poza tym plikiem
+   to nie obchodzi. To się nazywa "warstwa abstrakcji" i jest powodem,
+   dla którego dodanie obsługi telefonu nie wymagało ruszania gracza.
+   ============================================================ */
+
+const wejscie = (() => {
+  const klawisze = new Set();
+  const dzojstik = { aktywny: false, x: 0, y: 0, palec: null };
+
+  /* Gałkę pokazujemy tylko na dotyku. Kusi, żeby zrobić to samym CSS-em
+     (`@media (pointer: coarse)`), ale ta reguła bywa zawodna — część
+     przeglądarek i trybów podglądu w ogóle jej nie zgłasza. A pomyłka
+     kosztuje tu wszystko: telefon bez gałki to telefon, na którym nie da
+     się ruszyć bohaterem. Dlatego pytamy o to trzema drogami, a klasę
+     `dotyk` włącza pierwsza, która odpowie "tak". */
+  function wlaczDotyk() { document.body.classList.add('dotyk'); }
+  if (matchMedia('(pointer: coarse)').matches || navigator.maxTouchPoints > 0) wlaczDotyk();
+  window.addEventListener('touchstart', wlaczDotyk, { once: true, passive: true });
+
+  const MAPA = {
+    ArrowUp: 'gora', KeyW: 'gora',
+    ArrowDown: 'dol', KeyS: 'dol',
+    ArrowLeft: 'lewo', KeyA: 'lewo',
+    ArrowRight: 'prawo', KeyD: 'prawo',
+  };
+
+  window.addEventListener('keydown', e => {
+    if (MAPA[e.code]) { klawisze.add(MAPA[e.code]); e.preventDefault(); }
+    obudzDzwiek();
+  });
+  window.addEventListener('keyup', e => {
+    if (MAPA[e.code]) klawisze.delete(MAPA[e.code]);
+  });
+  // Alt+Tab podczas trzymania klawisza zostawiłby ludzika biegnącego
+  // w ścianę w nieskończoność. Dlatego czyścimy wszystko przy utracie okna.
+  window.addEventListener('blur', () => klawisze.clear());
+
+  // --- dżojstik dotykowy ---
+  const podkladka = document.getElementById('dzojstik');
+  const galka = document.getElementById('galka');
+  const PROMIEN = 52;
+
+  function ustawGalke(dx, dy) {
+    galka.style.transform = `translate(${dx}px, ${dy}px)`;
+  }
+
+  function start(e) {
+    const t = e.changedTouches ? e.changedTouches[0] : e;
+    dzojstik.aktywny = true;
+    dzojstik.palec = t.identifier !== undefined ? t.identifier : 'mysz';
+    podkladka.classList.add('aktywny');
+    obudzDzwiek();
+    rusz(e);
+  }
+
+  function rusz(e) {
+    if (!dzojstik.aktywny) return;
+    const t = e.changedTouches
+      ? [...e.changedTouches].find(x => x.identifier === dzojstik.palec)
+      : e;
+    if (!t) return;
+
+    const pole = podkladka.getBoundingClientRect();
+    let dx = t.clientX - (pole.left + pole.width / 2);
+    let dy = t.clientY - (pole.top + pole.height / 2);
+    const d = Math.hypot(dx, dy);
+
+    // Przycinamy wychylenie do promienia podkładki — gałka nie ucieka
+    // spod palca, nawet gdy przejedziesz nim przez pół ekranu.
+    if (d > PROMIEN) { dx = (dx / d) * PROMIEN; dy = (dy / d) * PROMIEN; }
+    dzojstik.x = dx / PROMIEN;
+    dzojstik.y = dy / PROMIEN;
+    ustawGalke(dx, dy);
+    e.preventDefault();
+  }
+
+  function koniec() {
+    dzojstik.aktywny = false;
+    dzojstik.x = dzojstik.y = 0;
+    dzojstik.palec = null;
+    podkladka.classList.remove('aktywny');
+    ustawGalke(0, 0);
+  }
+
+  podkladka.addEventListener('touchstart', start, { passive: false });
+  podkladka.addEventListener('touchmove', rusz, { passive: false });
+  podkladka.addEventListener('touchend', koniec);
+  podkladka.addEventListener('touchcancel', koniec);
+  podkladka.addEventListener('mousedown', start);
+  window.addEventListener('mousemove', rusz);
+  window.addEventListener('mouseup', koniec);
+
+  return {
+    kierunek() {
+      if (dzojstik.aktywny) return { x: dzojstik.x, y: dzojstik.y };
+      return {
+        x: (klawisze.has('prawo') ? 1 : 0) - (klawisze.has('lewo') ? 1 : 0),
+        y: (klawisze.has('dol') ? 1 : 0) - (klawisze.has('gora') ? 1 : 0),
+      };
+    },
+  };
+})();
+
+</script>
+<script>
+/* ---------- js/rysowanie.js ---------- */
+/* ============================================================
+   RYSOWANIE — wszystko, co widać
+   ============================================================
+   Cała grafika jest rysowana kodem. Zero obrazków, zero plików PNG.
+   Drzewo to trójkąt na prostokącie. Szlam to półkole z dwoma kropkami.
+   Wygląda dobrze nie dlatego, że jest skomplikowane, tylko dlatego,
+   że ma spójne kolory i wszystko lekko się rusza.
+
+   Kolejność rysowania = kolejność warstw. Kto później, ten na wierzchu.
+   ============================================================ */
+
+const plotno = document.getElementById('plotno');
+const ctx = plotno.getContext('2d');
+
+const kamera = { x: 0, y: 0 };
+let W = 0, H = 0;          // rozmiar okna w pikselach CSS
+let powiekszenie = 1;      // ile pikseli ekranu przypada na piksel świata
+
+function dopasujPlotno() {
+  // Ekrany "retina" mają więcej pikseli niż punktów CSS. Bez tego
+  // mnożnika gra byłaby rozmyta na telefonie i na dobrym laptopie.
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  W = plotno.clientWidth;
+  H = plotno.clientHeight;
+  plotno.width = Math.round(W * dpr);
+  plotno.height = Math.round(H * dpr);
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+  // Bez powiększenia na monitorze 27" widać naraz pół planety, a bohater
+  // jest wielkości mrówki. Celujemy w ~480 px świata na krótszym boku
+  // okna, żeby na każdym ekranie było widać mniej więcej tyle samo gry.
+  powiekszenie = Math.max(0.85, Math.min(2, Math.min(W, H) / 480));
+  odswiezPozycjeLicznikow();
+}
+
+/* Dokąd ma lecieć surowiec wyrąbany z ziemi: do swojego licznika w HUD.
+   Liczniki to zwykły HTML, więc pytamy przeglądarkę o ich położenie —
+   ale tylko przy zmianie rozmiaru okna, bo getBoundingClientRect() w pętli
+   60 razy na sekundę zmusza przeglądarkę do przeliczania układu strony. */
+const pozycjeLicznikow = {};
+
+function odswiezPozycjeLicznikow() {
+  for (const nazwa in USTAWIENIA.zasoby) {
+    const el = document.querySelector(`.zasob[data-zasob="${nazwa}"]`);
+    if (!el || el.hidden) continue;
+    const r = el.getBoundingClientRect();
+    pozycjeLicznikow[nazwa] = { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+  }
+}
+
+/* Gdzie punkt świata ląduje na ekranie. Potrzebne wszystkiemu, co rysujemy
+   POZA układem kamery — czyli lecącemu łupowi i strzałce celu. */
+function swiatNaEkran(x, y) {
+  return {
+    x: W / 2 + (x - kamera.x) * powiekszenie,
+    y: H / 2 + (y - kamera.y) * powiekszenie,
+  };
+}
+window.addEventListener('resize', dopasujPlotno);
+
+function aktualizujKamere(dt) {
+  // Kamera nie skacze do gracza — dogania go. Stąd wrażenie miękkości.
+  // 1 - 0.0001^dt to wygładzanie niezależne od liczby klatek na sekundę.
+  const sila = 1 - Math.pow(0.0001, dt);
+  kamera.x += (stan.gracz.x - kamera.x) * sila;
+  kamera.y += (stan.gracz.y - kamera.y) * sila;
+
+  const s = stan.swiat;
+  // Uwaga: liczymy w pikselach ŚWIATA, nie ekranu — stąd dzielenie
+  // przez powiększenie. Pomyłka tutaj daje kamerę, która przy krawędzi
+  // planety pokazuje pas pustki.
+  const widokW = W / powiekszenie, widokH = H / powiekszenie;
+  const szer = s.maxX - s.minX, wys = s.maxY - s.minY;
+  // Świat szerszy niż widok — nie pokazuj pustki za krawędzią.
+  // Węższy — wyśrodkuj go.
+  kamera.x = szer > widokW ? ogranicz(kamera.x, s.minX + widokW / 2, s.maxX - widokW / 2) : (s.minX + s.maxX) / 2;
+  kamera.y = wys > widokH ? ogranicz(kamera.y, s.minY + widokH / 2, s.maxY - widokH / 2) : (s.minY + s.maxY) / 2;
+}
+
+function ogranicz(v, min, max) { return Math.max(min, Math.min(max, v)); }
+
+function rysuj(czas) {
+  const s = stan.swiat;
+
+  ctx.fillStyle = s.cfg.niebo;
+  ctx.fillRect(0, 0, W, H);
+
+  ctx.save();
+  // Trzęsienie ekranu przy oberwaniu. Kosztuje 3 linijki, a różnica
+  // w odczuciu "czy cios miał moc" jest ogromna.
+  const t = stan.trzesienie;
+  const wstrzasX = t > 0 ? (Math.random() - 0.5) * t : 0;
+  const wstrzasY = t > 0 ? (Math.random() - 0.5) * t : 0;
+  ctx.translate(W / 2, H / 2);
+  ctx.scale(powiekszenie, powiekszenie);
+  ctx.translate(-kamera.x + wstrzasX, -kamera.y + wstrzasY);
+
+  rysujKafle(s);
+  rysujPortal(s, czas);
+
+  // Wszystko, co stoi na ziemi, sortujemy po Y: to, co niżej na ekranie,
+  // rysuje się później, czyli zasłania to, co wyżej. Tania iluzja głębi.
+  const doPosortowania = [];
+  for (const kafel of s.kafle.values()) {
+    if (!kafel.odblokowany) continue;
+    for (const z of kafel.zloza) if (!z.wykopane) doPosortowania.push(z);
+  }
+  for (const w of s.wrogowie) if (w.zywy) doPosortowania.push(w);
+  doPosortowania.push(stan.gracz);
+  doPosortowania.sort((a, b) => a.y - b.y);
+
+  for (const obiekt of doPosortowania) {
+    // Rozróżniamy po JAWNYM znaczniku, nie po tym, "czy obiekt ma pole def".
+    // Kiedyś stało tu `obiekt.def` i działało — dopóki wrogowie nie dostali
+    // własnego pola `def` ze swoimi statystykami. Od tej chwili każdy szlam
+    // i każdy boss rysował się jako kryształ, bo trafiał w gałąź dla złóż.
+    // Sprawdzanie "czy pole istnieje" zamiast "czym to jest" psuje się cicho.
+    if (obiekt === stan.gracz) rysujGracza(obiekt, czas);
+    else if (obiekt.zlozem) rysujZloze(obiekt);
+    else rysujSzlama(obiekt);
+  }
+
+  rysujOdpryski();
+  rysujNapisy();
+  ctx.restore();
+
+  // Lecący łup i strzałka rysują się PO restore, bo obie rzeczy żyją
+  // w przestrzeni ekranu, nie świata.
+  rysujLecacyLup();
+  rysujStrzalke();
+}
+
+/* Strzałka wskazująca JEDNĄ rzecz do zrobienia. Krąży wokół bohatera,
+   nie przy krawędzi ekranu — dzięki temu wzrok nie musi skakać po całym
+   ekranie, żeby ją znaleźć. Znika, gdy cel jest tuż obok, bo strzałka
+   wskazująca coś, na czym już stoisz, tylko rozprasza. */
+function rysujStrzalke() {
+  const cel = stan.cel;
+  if (!cel || stan.pauza) return;
+
+  const g = stan.gracz;
+  const dystans = odleglosc(g.x, g.y, cel.x, cel.y);
+  if (dystans < 110) return;
+
+  const kat = Math.atan2(cel.y - g.y, cel.x - g.x);
+  const srodek = swiatNaEkran(g.x, g.y);
+  const promien = 62;
+  const x = srodek.x + Math.cos(kat) * promien;
+  const y = srodek.y + Math.sin(kat) * promien;
+
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate(kat);
+  // Delikatne pulsowanie w stronę celu — oko łapie ruch szybciej niż kształt.
+  const puls = Math.sin(performance.now() / 220) * 3;
+  ctx.translate(puls, 0);
+
+  ctx.fillStyle = '#f2c14e';
+  ctx.strokeStyle = 'rgba(0,0,0,0.45)';
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.moveTo(16, 0);
+  ctx.lineTo(-8, -11);
+  ctx.lineTo(-3, 0);
+  ctx.lineTo(-8, 11);
+  ctx.closePath();
+  ctx.stroke();
+  ctx.fill();
+  ctx.restore();
+
+  // Ikona przy strzałce mówi CZEGO szukamy: drewna, kafla, bossa, portalu.
+  if (cel.ikona) {
+    ctx.textAlign = 'center';
+    ctx.font = '19px system-ui, sans-serif';
+    ctx.fillText(cel.ikona, srodek.x + Math.cos(kat) * (promien + 24),
+                            srodek.y + Math.sin(kat) * (promien + 24) + 7);
+  }
+}
+
+/* ---------------- ZIEMIA ---------------- */
+
+function rysujKafle(s) {
+  const K = USTAWIENIA.kafel;
+  const kupne = new Set(kupowalne(s).map(k => k.klucz));
+
+  for (const kafel of s.kafle.values()) {
+    if (kafel.odblokowany) {
+      // Szachownica: dwa odcienie zieleni na przemian. (kx+ky) % 2 to
+      // najstarszy trik świata na wzór w kratkę.
+      const parzysty = ((kafel.kx + kafel.ky) % 2 + 2) % 2;
+      ctx.fillStyle = s.cfg.ziemia[parzysty];
+      ctx.fillRect(kafel.x, kafel.y, K, K);
+
+      ctx.strokeStyle = s.cfg.obwodka;
+      ctx.lineWidth = 3;
+      ctx.strokeRect(kafel.x + 1.5, kafel.y + 1.5, K - 3, K - 3);
+      continue;
+    }
+
+    if (!kupne.has(kafel.klucz)) continue;   // dalekie kafle: zwyczajnie ich nie ma
+
+    // --- kafel do kupienia ---
+    const stac = staNasKafel(kafel);
+    ctx.fillStyle = stac ? 'rgba(242,193,78,0.13)' : 'rgba(255,255,255,0.05)';
+    ctx.fillRect(kafel.x, kafel.y, K, K);
+
+    ctx.save();
+    ctx.setLineDash([14, 12]);
+    ctx.lineWidth = 4;
+    ctx.strokeStyle = stac ? '#f2c14e' : 'rgba(255,255,255,0.28)';
+    ctx.strokeRect(kafel.x + 2, kafel.y + 2, K - 4, K - 4);
+    ctx.restore();
+
+    rysujCene(kafel, stac);
+  }
+}
+
+function staNasKafel(kafel) {
+  for (const z in kafel.cena) {
+    if ((stan.zasoby[z] || 0) < kafel.cena[z]) return false;
+  }
+  return true;
+}
+
+function rysujCene(kafel, stac) {
+  const K = USTAWIENIA.kafel;
+  const cx = kafel.x + K / 2, cy = kafel.y + K / 2;
+
+  // Cennik stoi na środku kafla. Gdy kafel wystaje poza ekran, środek jest
+  // już za krawędzią i zostaje po nim ucięty słupek liter ("Dr / Ka / Z"),
+  // który wygląda jak usterka. Taki kafel po prostu pomijamy — przerywana
+  // ramka i tak mówi graczowi, że jest tam ziemia do kupienia.
+  const polSzer = W / (2 * powiekszenie), polWys = H / (2 * powiekszenie);
+  if (Math.abs(cx - kamera.x) > polSzer - 70 || Math.abs(cy - kamera.y) > polWys - 50) return;
+
+  // Napisy w świecie skalują się razem ze światem — a przy powiększeniu
+  // 2x cennik urósłby na pół ekranu. Dlatego dzielimy rozmiar czcionki
+  // przez powiększenie: na ekranie wychodzi zawsze te same ~15 px.
+  const px = n => n / powiekszenie;
+
+  ctx.textAlign = 'center';
+  ctx.font = `${px(26)}px system-ui, sans-serif`;
+  ctx.fillStyle = '#fff';
+  ctx.fillText(stac ? '🔓' : '🔒', cx, cy - px(22));
+
+  // Cena: tylko te składniki, które faktycznie kosztują.
+  const czesci = [];
+  for (const z in kafel.cena) {
+    if (kafel.cena[z] > 0) czesci.push({ z, ile: kafel.cena[z] });
+  }
+  ctx.font = `bold ${px(15)}px system-ui, sans-serif`;
+  ctx.lineWidth = px(3.5);
+  ctx.strokeStyle = 'rgba(0,0,0,0.6)';
+  let y = cy + px(6);
+  for (const c of czesci) {
+    const mam = stan.zasoby[c.z] || 0;
+    const tekst = `${USTAWIENIA.zasoby[c.z].nazwa}: ${Math.min(mam, c.ile)}/${c.ile}`;
+    ctx.strokeText(tekst, cx, y);
+    ctx.fillStyle = mam >= c.ile ? '#a9e5a0' : '#ff9d9d';
+    ctx.fillText(tekst, cx, y);
+    y += px(19);
+  }
+}
+
+/* ---------------- ZŁOŻA ---------------- */
+
+function rysujZloze(z) {
+  ctx.save();
+  ctx.translate(z.x, z.y);
+
+  // "Drżenie": po trafieniu obiekt na moment się rozjeżdża.
+  if (z.drzenie > 0) {
+    ctx.rotate(Math.sin(z.drzenie * 40) * 0.08 * z.drzenie);
+    ctx.scale(1 + z.drzenie * 0.06, 1 - z.drzenie * 0.05);
+  }
+
+  cien(0, z.promien * 0.55, z.promien * 0.95, z.promien * 0.36);
+
+  if (z.typ === 'drzewo') rysujDrzewo(z);
+  else if (z.typ === 'skala') rysujSkale(z, '#9aa3ad', '#6f7883');
+  else if (z.typ === 'zyla') { rysujSkale(z, '#8d949d', '#666e78'); kropki(z, '#f2c14e'); }
+  else rysujKrysztal(z);
+
+  ctx.restore();
+  if (z.zycie < z.maxZycie) paskZycia(z.x, z.y - z.promien - 16, 44, z.zycie / z.maxZycie, '#7ee08a');
+
+  // Za słabe narzędzie? Kłódka i ikona narzędzia, którego brakuje.
+  // Wcześniej mówiło o tym zdanie na górze ekranu — czyli informacja
+  // dla tych, którzy umieją czytać, i to tylko o jednym złożu naraz.
+  // Ikonka nad każdym takim złożem działa dla wszystkich i od razu.
+  if (stan.narzedzia[z.def.narzedzie] < z.def.minPoziom) {
+    const px = n => n / powiekszenie;
+    ctx.textAlign = 'center';
+    ctx.font = `${px(15)}px system-ui, sans-serif`;
+    ctx.fillText('🔒' + USTAWIENIA.narzedzia[z.def.narzedzie].ikona, z.x, z.y - z.promien - px(10));
+  }
+}
+
+function rysujDrzewo(z) {
+  const r = z.promien;
+  // Pień zaczyna się WYŻEJ niż podstawa najniższej korony (-5), inaczej
+  // między nimi zostaje kilkupikselowa szczelina i drzewo wygląda,
+  // jakby korona lewitowała.
+  ctx.fillStyle = '#7a5230';
+  ctx.fillRect(-4, -9, 8, r * 0.9 + 7);
+  // Trzy trójkąty jeden nad drugim = choinka. Tyle wystarczy.
+  for (let i = 0; i < 3; i++) {
+    ctx.fillStyle = ['#2f7d3f', '#37904a', '#3fa356'][i];
+    const szer = r * (1.15 - i * 0.22);
+    const gora = -r * (0.55 + i * 0.52);
+    ctx.beginPath();
+    ctx.moveTo(0, gora - r * 0.6);
+    ctx.lineTo(-szer, gora + r * 0.3);
+    ctx.lineTo(szer, gora + r * 0.3);
+    ctx.closePath();
+    ctx.fill();
+  }
+}
+
+function rysujSkale(z, jasny, ciemny) {
+  const r = z.promien;
+  ctx.fillStyle = jasny;
+  ctx.beginPath();
+  // Sześciokąt obrócony o własny, stały kąt — dlatego każda skała
+  // wygląda inaczej, choć rysuje ją ta sama funkcja.
+  for (let i = 0; i < 6; i++) {
+    const k = z.obrot + (i / 6) * Math.PI * 2;
+    const promien = r * (i % 2 ? 0.86 : 1);
+    const x = Math.cos(k) * promien, y = Math.sin(k) * promien * 0.85 - r * 0.15;
+    i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+  }
+  ctx.closePath();
+  ctx.fill();
+  ctx.fillStyle = ciemny;
+  ctx.beginPath();
+  ctx.ellipse(0, r * 0.3, r * 0.92, r * 0.3, 0, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+function kropki(z, kolor) {
+  ctx.fillStyle = kolor;
+  const r = z.promien;
+  for (let i = 0; i < 4; i++) {
+    const k = z.obrot * 2 + i * 1.7;
+    ctx.beginPath();
+    ctx.arc(Math.cos(k) * r * 0.42, Math.sin(k) * r * 0.32 - r * 0.1, 3.6, 0, Math.PI * 2);
+    ctx.fill();
+  }
+}
+
+function rysujKrysztal(z) {
+  const r = z.promien;
+  const punkty = [[0, -r * 1.35], [r * 0.62, -r * 0.25], [r * 0.38, r * 0.7], [-r * 0.38, r * 0.7], [-r * 0.62, -r * 0.25]];
+  ctx.fillStyle = '#8f6ff5';
+  ctx.beginPath();
+  punkty.forEach(([x, y], i) => i ? ctx.lineTo(x, y) : ctx.moveTo(x, y));
+  ctx.closePath();
+  ctx.fill();
+  // Jasny pasek z jednej strony = kryształ nagle wygląda na szklany.
+  ctx.fillStyle = '#c3aefc';
+  ctx.beginPath();
+  ctx.moveTo(0, -r * 1.35); ctx.lineTo(-r * 0.62, -r * 0.25); ctx.lineTo(-r * 0.38, r * 0.7); ctx.lineTo(0, r * 0.2);
+  ctx.closePath();
+  ctx.fill();
+}
+
+/* ---------------- POSTACIE ---------------- */
+
+function rysujGracza(g, czas) {
+  ctx.save();
+  ctx.translate(g.x, g.y);
+  cien(0, 12, 15, 7);
+
+  const kolysanie = g.idzie ? Math.sin(g.krok) : 0;
+
+  // nogi
+  ctx.strokeStyle = '#22344a';
+  ctx.lineWidth = 5;
+  ctx.lineCap = 'round';
+  ctx.beginPath();
+  ctx.moveTo(0, 2); ctx.lineTo(-4 + kolysanie * 6, 13);
+  ctx.moveTo(0, 2); ctx.lineTo(4 - kolysanie * 6, 13);
+  ctx.stroke();
+
+  // tułów
+  ctx.strokeStyle = '#f3f6fb';
+  ctx.lineWidth = 9;
+  ctx.beginPath();
+  ctx.moveTo(0, 3); ctx.lineTo(0, -9);
+  ctx.stroke();
+
+  // narzędzie w rękach — obraca się w stronę celu i wymachuje
+  rysujNarzedzie(g);
+
+  // głowa (rysowana po narzędziu, żeby nie została nim przecięta)
+  ctx.fillStyle = '#ffe0b8';
+  ctx.beginPath();
+  ctx.arc(0, -17, 8.5, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = '#3a2b1c';
+  ctx.beginPath();
+  ctx.arc(0, -20.5, 8.5, Math.PI, Math.PI * 2);
+  ctx.fill();
+
+  ctx.restore();
+}
+
+function rysujNarzedzie(g) {
+  const kolory = { siekiera: '#d9dee6', kilof: '#b9c2cd', miecz: '#e8eef7' };
+  ctx.save();
+  // Zamach: narzędzie odchyla się o ~1 radian i wraca. `zamach` spada
+  // do zera w `aktualizujGracza`, więc animacja robi się sama.
+  ctx.rotate(g.patrzy + Math.PI / 2 - g.zamach * 1.15);
+  ctx.translate(0, -4);
+
+  ctx.strokeStyle = '#8a6a45';           // trzonek
+  ctx.lineWidth = 4;
+  ctx.lineCap = 'round';
+  ctx.beginPath();
+  ctx.moveTo(0, 0); ctx.lineTo(0, -26);
+  ctx.stroke();
+
+  ctx.fillStyle = kolory[g.narzedzieWRece];
+  if (g.narzedzieWRece === 'miecz') {
+    ctx.fillRect(-3, -40, 6, 20);
+  } else if (g.narzedzieWRece === 'siekiera') {
+    ctx.beginPath();
+    ctx.moveTo(0, -30); ctx.lineTo(13, -34); ctx.lineTo(13, -22); ctx.lineTo(0, -24);
+    ctx.closePath(); ctx.fill();
+  } else {
+    ctx.lineWidth = 5;
+    ctx.strokeStyle = kolory.kilof;
+    ctx.beginPath();
+    ctx.moveTo(-12, -24); ctx.quadraticCurveTo(0, -34, 12, -24);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+function rysujSzlama(w) {
+  ctx.save();
+  ctx.translate(w.x, w.y);
+  cien(0, w.promien * 0.5, w.promien * 0.95, w.promien * 0.35);
+
+  // Skakanie: |sin| daje odbicia od ziemi zamiast płynnej fali.
+  // Śpiący boss tylko powoli oddycha, więc amplitudę tniemy.
+  const skok = Math.abs(Math.sin(w.skok)) * (w.spi ? 2 : 5);
+  const splaszczenie = 1 + skok * 0.02;
+  ctx.translate(0, -skok);
+  if (w.drzenie > 0) ctx.translate((Math.random() - 0.5) * 5 * w.drzenie, 0);
+
+  const r = w.promien;
+  // Boss ma własną paletę, żeby na pierwszy rzut oka było widać, że to
+  // co innego niż zwykły szlam — kolor niesie tę informację szybciej
+  // niż rozmiar, bo rozmiar trzeba z czymś porównać.
+  ctx.fillStyle = w.bossem
+    ? (w.spi ? '#6d3f63' : (w.goni ? '#c05a9e' : '#a34e86'))
+    : (w.goni ? '#5fbf6c' : '#79c98a');
+
+  // Boss jest nie tylko większy, ale i WYŻSZY. Sama większa szerokość
+  // dawała rozlaną kałużę, a nie coś, co ma zagrażać — sylwetka niesie
+  // groźbę lepiej niż rozmiar.
+  const wysoko = (r * (1.9 - splaszczenie) * 0.5 + r * 0.35) * (w.bossem ? 1.55 : 1);
+  ctx.beginPath();
+  ctx.ellipse(0, 0, r * splaszczenie, wysoko, 0, Math.PI, 0);
+  ctx.closePath();
+  ctx.fill();
+  ctx.beginPath();
+  ctx.ellipse(0, 0, r * splaszczenie, r * 0.3, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Rogi bossa — dwa trójkąty. Tyle wystarczy, żeby "duży szlam" czytał się
+  // jako "ten najważniejszy".
+  if (w.bossem) {
+    ctx.fillStyle = '#f0e3f4';
+    for (const bok of [-1, 1]) {
+      ctx.beginPath();
+      ctx.moveTo(bok * r * 0.58, -wysoko * 0.55);
+      ctx.lineTo(bok * r * 0.92, -wysoko * 1.25);
+      ctx.lineTo(bok * r * 0.26, -wysoko * 0.82);
+      ctx.closePath();
+      ctx.fill();
+    }
+  }
+
+  ctx.fillStyle = '#12241a';                 // oczy
+  const oko = w.bossem ? 5.2 : 2.6;
+  const okoY = w.bossem ? -wysoko * 0.5 : -r * 0.3;
+  ctx.beginPath();
+  if (w.spi) {
+    // Zamknięte oczy = dwie kreski. Najtańszy sposób na "on śpi".
+    ctx.rect(-r * 0.46, okoY, r * 0.28, 3);
+    ctx.rect(r * 0.18, okoY, r * 0.28, 3);
+  } else {
+    ctx.arc(-r * 0.32, okoY, oko, 0, Math.PI * 2);
+    ctx.arc(r * 0.32, okoY, oko, 0, Math.PI * 2);
+  }
+  ctx.fill();
+
+  ctx.restore();
+
+  if (w.spi) {
+    const px = n => n / powiekszenie;
+    ctx.textAlign = 'center';
+    ctx.font = `bold ${px(15)}px system-ui, sans-serif`;
+    ctx.fillStyle = 'rgba(255,255,255,0.75)';
+    ctx.fillText('Zzz…', w.x + r * 0.8, w.y - r - px(6) + Math.sin(w.skok) * 3);
+    return;
+  }
+
+  if (w.bossem) {
+    paskZycia(w.x, w.y - w.promien * 1.9, 100, w.zycie / w.maxZycie, '#ff7b7b');
+  } else if (w.zycie < w.maxZycie) {
+    paskZycia(w.x, w.y - w.promien - 14, 38, w.zycie / w.maxZycie, '#ff7b7b');
+  }
+}
+
+/* ---------------- PORTAL ---------------- */
+
+function rysujPortal(s, czas) {
+  const p = s.portal;
+  const gotowy = portalGotowy(s);
+  const r = p.promien;
+  const px = n => n / powiekszenie;
+
+  ctx.save();
+  ctx.translate(p.x, p.y);
+  cien(0, r * 0.72, r * 0.95, r * 0.3);
+
+  const pulsowanie = 1 + Math.sin(czas * 3) * 0.06;
+
+  // Poświata: kilka coraz większych, coraz bledszych kół. Sam gradient
+  // canvasa byłby ładniejszy, ale to jest o trzy linijki krótsze
+  // i wygląda praktycznie tak samo.
+  for (let i = 3; i >= 1; i--) {
+    ctx.fillStyle = gotowy ? `rgba(96, 190, 255, ${0.13 * i})` : `rgba(150, 155, 170, ${0.05 * i})`;
+    ctx.beginPath();
+    ctx.arc(0, 0, r * pulsowanie * (0.75 + i * 0.35), 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // Ciemne oko portalu + obracająca się obwódka — to obracanie jest
+  // jedynym powodem, dla którego portal wygląda na "włączony".
+  ctx.fillStyle = gotowy ? '#0d2f52' : '#2a2f3a';
+  ctx.beginPath();
+  ctx.arc(0, 0, r * 0.72 * pulsowanie, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.save();
+  ctx.rotate(gotowy ? p.obrot * 1.6 : 0);
+  ctx.setLineDash([r * 0.42, r * 0.3]);
+  ctx.lineWidth = 5;
+  ctx.strokeStyle = gotowy ? '#7fd4ff' : 'rgba(255,255,255,0.28)';
+  ctx.beginPath();
+  ctx.arc(0, 0, r * 0.86, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.restore();
+
+  ctx.textAlign = 'center';
+  ctx.font = `${px(24)}px system-ui, sans-serif`;
+  ctx.fillText(gotowy ? '🌀' : '🔒', 0, px(9));
+
+  // Podpis pod portalem — bez niego dzieciak przez pół gry nie wie,
+  // że ta świecąca kropka na środku to w ogóle wyjście na kolejną planetę.
+  ctx.font = `bold ${px(13)}px system-ui, sans-serif`;
+  ctx.lineWidth = px(3.5);
+  ctx.strokeStyle = 'rgba(0,0,0,0.6)';
+  const podpis = gotowy
+    ? 'PORTAL — wejdź!'
+    : (wszystkoOdblokowane(s) ? 'Pokonaj bossa!' : 'Portal: odblokuj całą ziemię');
+  ctx.strokeText(podpis, 0, r + px(20));
+  ctx.fillStyle = gotowy ? '#9fe0ff' : 'rgba(255,255,255,0.55)';
+  ctx.fillText(podpis, 0, r + px(20));
+  ctx.restore();
+}
+
+function wszystkoOdblokowane(s) {
+  for (const k of s.kafle.values()) if (!k.odblokowany) return false;
+  return true;
+}
+
+/* ---------------- DROBIAZGI ---------------- */
+
+/* Część osób dostaje mdłości od trzęsącego się obrazu — system operacyjny
+   pozwala to zgłosić i przeglądarka nam to mówi. Ignorowanie tego ustawienia
+   jest dokładnie tym samym, co ignorowanie "nie lubię migających świateł". */
+function mnoznikRuchu() {
+  return matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : 1;
+}
+
+function cien(x, y, rx, ry) {
+  ctx.fillStyle = 'rgba(0,0,0,0.22)';
+  ctx.beginPath();
+  ctx.ellipse(x, y, rx, ry, 0, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+function paskZycia(x, y, szer, ulamek, kolor) {
+  ctx.fillStyle = 'rgba(0,0,0,0.45)';
+  ctx.fillRect(x - szer / 2, y, szer, 6);
+  ctx.fillStyle = kolor;
+  ctx.fillRect(x - szer / 2, y, szer * Math.max(0, ulamek), 6);
+}
+
+/* Surowiec leci z ziemi prosto do licznika. Licznik rośnie NATYCHMIAST
+   przy uderzeniu — ta cząstka jest wyłącznie ozdobą. Rozdzielenie stanu
+   od animacji to ważny nawyk: gdyby liczba rosła dopiero po dolocie,
+   każde spowolnienie animacji zmieniałoby zasady gry. */
+function lecacyLup(x, y, zasob) {
+  if (stan.lecacyLup.length > 120) return;    // bezpiecznik na wypadek szału
+  stan.lecacyLup.push({
+    x, y, zasob,
+    t: 0,
+    czas: USTAWIENIA.lotLupu,
+    odchylenie: (Math.random() - 0.5) * 90,   // żeby nie leciały jednym sznurkiem
+    wznios: 40 + Math.random() * 60,
+  });
+}
+
+function rysujLecacyLup() {
+  for (const l of stan.lecacyLup) {
+    const koniec = pozycjeLicznikow[l.zasob];
+    if (!koniec) continue;
+
+    const p = Math.min(1, l.t / l.czas);
+    const e = p * p;                          // rozpędza się w locie
+    const start = swiatNaEkran(l.x, l.y);
+    // Punkt kontrolny nad trasą zagina lot w łuk. Prosta linia wygląda
+    // jak błąd, łuk wygląda jak rzut.
+    const sterX = (start.x + koniec.x) / 2 + l.odchylenie;
+    const sterY = Math.min(start.y, koniec.y) - l.wznios;
+
+    const q = 1 - e;
+    const x = q * q * start.x + 2 * q * e * sterX + e * e * koniec.x;
+    const y = q * q * start.y + 2 * q * e * sterY + e * e * koniec.y;
+
+    ctx.globalAlpha = p > 0.85 ? (1 - p) / 0.15 : 1;   // gaśnie tuż przed licznikiem
+    ctx.fillStyle = USTAWIENIA.zasoby[l.zasob].kolor;
+    ctx.beginPath();
+    ctx.arc(x, y, 6 - p * 2, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.lineWidth = 1.5;
+    ctx.strokeStyle = 'rgba(255,255,255,0.75)';
+    ctx.stroke();
+  }
+  ctx.globalAlpha = 1;
+}
+
+/* Odpryski i napisy to "juice" — nie zmieniają zasad gry ani o jotę,
+   a bez nich wszystko wydaje się martwe. Tanio, więc nie żałujemy. */
+function odpryski(x, y, kolor, ile) {
+  for (let i = 0; i < ile; i++) {
+    const kat = Math.random() * Math.PI * 2;
+    const v = 40 + Math.random() * 130;
+    stan.odpryski.push({
+      x, y, kolor,
+      vx: Math.cos(kat) * v,
+      vy: Math.sin(kat) * v - 60,
+      zycie: 0.45 + Math.random() * 0.35,
+      max: 0.8,
+      r: 2 + Math.random() * 2.5,
+    });
+  }
+}
+
+function rysujOdpryski() {
+  for (const o of stan.odpryski) {
+    ctx.globalAlpha = Math.max(0, o.zycie / o.max);
+    ctx.fillStyle = o.kolor;
+    ctx.beginPath();
+    ctx.arc(o.x, o.y, o.r, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+}
+
+function napis(x, y, tekst, kolor) {
+  stan.napisy.push({ x, y, tekst, kolor, zycie: 1.1, max: 1.1 });
+}
+
+function rysujNapisy() {
+  ctx.textAlign = 'center';
+  ctx.font = 'bold 17px system-ui, sans-serif';
+  for (const n of stan.napisy) {
+    ctx.globalAlpha = Math.max(0, n.zycie / n.max);
+    ctx.lineWidth = 4;
+    ctx.strokeStyle = 'rgba(0,0,0,0.55)';
+    ctx.strokeText(n.tekst, n.x, n.y);
+    ctx.fillStyle = n.kolor;
+    ctx.fillText(n.tekst, n.x, n.y);
+  }
+  ctx.globalAlpha = 1;
+}
+
+function aktualizujEfekty(dt) {
+  for (let i = stan.odpryski.length - 1; i >= 0; i--) {
+    const o = stan.odpryski[i];
+    o.x += o.vx * dt;
+    o.y += o.vy * dt;
+    o.vy += 420 * dt;          // grawitacja
+    o.zycie -= dt;
+    if (o.zycie <= 0) stan.odpryski.splice(i, 1);
+  }
+  for (let i = stan.lecacyLup.length - 1; i >= 0; i--) {
+    const l = stan.lecacyLup[i];
+    l.t += dt;
+    if (l.t >= l.czas) stan.lecacyLup.splice(i, 1);
+  }
+  for (let i = stan.napisy.length - 1; i >= 0; i--) {
+    const n = stan.napisy[i];
+    n.y -= 34 * dt;
+    n.zycie -= dt;
+    if (n.zycie <= 0) stan.napisy.splice(i, 1);
+  }
+  stan.trzesienie = Math.max(0, stan.trzesienie - dt * 30);
+}
+
+</script>
+<script>
+/* ---------- js/gracz.js ---------- */
+/* ============================================================
+   GRACZ — chodzenie, kopanie, bicie
+   ============================================================
+   Najważniejsza zasada tej gry: gracz NIE klika, żeby atakować.
+   Podchodzi blisko, a bohater sam zaczyna młócić. Ty tylko chodzisz.
+   Cała ta magia to jedna funkcja niżej: `automatycznaAkcja`.
+   ============================================================ */
+
+function stworzGracza() {
+  const g = USTAWIENIA.gracz;
+  const K = USTAWIENIA.kafel;
+  return {
+    x: K * 0.5, y: K * 0.72,     // start: środek kafla startowego
+    promien: g.promien,
+    zycie: g.maxZycie,
+    patrzy: 0,                   // kąt, w którą stronę zwrócony (do rysowania)
+    idzie: false,
+    krok: 0,                     // licznik animacji nóg
+    // "zamach": 0 = narzędzie w spoczynku, 1 = pełny wymach
+    zamach: 0,
+    narzedzieWRece: 'siekiera',
+    ostatniCios: 0,              // kiedy ostatnio uderzyliśmy (cooldown)
+    ostatnioOberwal: 999,        // ile sekund temu dostaliśmy — do regeneracji
+  };
+}
+
+/* Czy w tym punkcie można stać? Sprawdzamy cztery skrajne punkty ciała,
+   bo sam środek pozwalałby wejść w ścianę do połowy. */
+function mozeStac(swiat, x, y, r) {
+  return odblokowanyPod(swiat, x - r, y - r)
+      && odblokowanyPod(swiat, x + r, y - r)
+      && odblokowanyPod(swiat, x - r, y + r)
+      && odblokowanyPod(swiat, x + r, y + r);
+}
+
+/* Złoża z kafla gracza oraz ośmiu wokół. Sprawdzanie CAŁEJ planety co
+   klatkę też by działało, ale byłoby kilkadziesiąt razy droższe.
+   To się nazywa "broad phase" — najpierw odsiej to, co daleko.
+   (Wrogów tak NIE filtrujemy: oni się ruszają, a jest ich kilkadziesiąt,
+   więc taniej i bezpieczniej przejechać całą listę.) */
+function kafleWokol(swiat, x, y) {
+  const K = USTAWIENIA.kafel;
+  const kx = Math.floor(x / K), ky = Math.floor(y / K);
+  const out = [];
+  for (let dy = -1; dy <= 1; dy++) {
+    for (let dx = -1; dx <= 1; dx++) {
+      const k = swiat.kafle.get(kluczKafla(kx + dx, ky + dy));
+      if (k && k.odblokowany) out.push(k);
+    }
+  }
+  return out;
+}
+
+function aktualizujGracza(dt) {
+  const g = stan.gracz;
+  const cfg = USTAWIENIA.gracz;
+  const swiat = stan.swiat;
+
+  // --- ruch -------------------------------------------------
+  let { x: kx, y: ky } = wejscie.kierunek();
+  const dlugosc = Math.hypot(kx, ky);
+  g.idzie = dlugosc > 0.08;
+
+  if (g.idzie) {
+    // Normalizacja: bez niej chodzenie na skos byłoby o 41% szybsze.
+    kx /= dlugosc; ky /= dlugosc;
+    g.patrzy = Math.atan2(ky, kx);
+    g.krok += dt * 11;
+
+    const krokX = kx * cfg.predkosc * dt;
+    const krokY = ky * cfg.predkosc * dt;
+
+    // Osobno X i osobno Y — dzięki temu ślizgamy się po ścianie,
+    // zamiast się w niej zakleszczać.
+    if (mozeStac(swiat, g.x + krokX, g.y, g.promien)) g.x += krokX;
+    if (mozeStac(swiat, g.x, g.y + krokY, g.promien)) g.y += krokY;
+  }
+
+  // --- nie wchodź w kamienie --------------------------------
+  for (const kafel of kafleWokol(swiat, g.x, g.y)) {
+    for (const z of kafel.zloza) {
+      if (z.wykopane) continue;
+      const d = odleglosc(g.x, g.y, z.x, z.y);
+      const min = g.promien + z.promien;
+      if (d < min && d > 0.001) {
+        // Wypychamy gracza na zewnątrz po linii łączącej środki.
+        g.x -= ((z.x - g.x) / d) * (min - d);
+        g.y -= ((z.y - g.y) / d) * (min - d);
+      }
+    }
+  }
+
+  // --- regeneracja ------------------------------------------
+  g.ostatnioOberwal += dt;
+  if (g.ostatnioOberwal > cfg.regenPo && g.zycie < cfg.maxZycie) {
+    g.zycie = Math.min(cfg.maxZycie, g.zycie + cfg.regenZycia * trudnosc().regenGracza * dt);
+  }
+
+  // --- zamach opada -----------------------------------------
+  g.zamach = Math.max(0, g.zamach - dt * 6);
+
+  automatycznaAkcja(dt);
+}
+
+/* Serce gry. Kolejność jest ważna: wróg ma priorytet nad drzewem,
+   bo bicie drzewa, gdy szlam żre Ci plecy, wygląda głupio. */
+function automatycznaAkcja(dt) {
+  const g = stan.gracz;
+  const cfg = USTAWIENIA.gracz;
+  g.ostatniCios += dt;
+
+  // 1. Jest wróg w zasięgu miecza?
+  let celWrog = null, najblizszy = Infinity;
+  for (const w of stan.swiat.wrogowie) {
+    if (!w.zywy || w.spi) continue;      // śpiącego bossa nie zaczepiamy
+    const d = odleglosc(g.x, g.y, w.x, w.y);
+    if (d < cfg.zasiegMiecza + w.promien && d < najblizszy) { najblizszy = d; celWrog = w; }
+  }
+
+  if (celWrog) {
+    const m = USTAWIENIA.narzedzia.miecz;
+    g.narzedzieWRece = 'miecz';
+    g.patrzy = Math.atan2(celWrog.y - g.y, celWrog.x - g.x);
+    if (g.ostatniCios >= 1 / m.tempo) {
+      g.ostatniCios = 0;
+      g.zamach = 1;
+      zadajWrogowi(celWrog, obrazenia('miecz'));
+      dzwiek('ciecie');
+    }
+    return;
+  }
+
+  // 2. Jest złoże w zasięgu?
+  let cel = null, najblizsze = Infinity;
+  for (const kafel of kafleWokol(stan.swiat, g.x, g.y)) {
+    for (const z of kafel.zloza) {
+      if (z.wykopane) continue;
+      const d = odleglosc(g.x, g.y, z.x, z.y) - z.promien;
+      if (d < cfg.zasiegKopania && d < najblizsze) { najblizsze = d; cel = z; }
+    }
+  }
+  if (!cel) { stan.blokada = null; return; }
+
+  const narzedzie = cel.def.narzedzie;
+  g.narzedzieWRece = narzedzie;
+
+  // Za słabe narzędzie? Nie kopiemy, ale MÓWIMY dlaczego.
+  // Cicha porażka to najgorsza rzecz, jaką można zrobić graczowi.
+  if (stan.narzedzia[narzedzie] < cel.def.minPoziom) {
+    stan.blokada = `${USTAWIENIA.narzedzia[narzedzie].nazwa} poz. ${cel.def.minPoziom} potrzebny na: ${cel.def.nazwa}`;
+    return;
+  }
+  stan.blokada = null;
+
+  g.patrzy = Math.atan2(cel.y - g.y, cel.x - g.x);
+  const def = USTAWIENIA.narzedzia[narzedzie];
+  if (g.ostatniCios >= 1 / def.tempo) {
+    g.ostatniCios = 0;
+    g.zamach = 1;
+    uderzZloze(cel, obrazenia(narzedzie));
+  }
+}
+
+/* Skrót do aktualnie wybranego poziomu trudności. Zapasowe "normalny"
+   ratuje wczytanie zapisu z wersji, która trudności jeszcze nie miała. */
+function trudnosc() {
+  return USTAWIENIA.trudnosc[stan.trudnosc] || USTAWIENIA.trudnosc.normalny;
+}
+
+function obrazenia(narzedzie) {
+  const d = USTAWIENIA.narzedzia[narzedzie];
+  return d.bazowe + d.naPoziom * (stan.narzedzia[narzedzie] - 1);
+}
+
+function uderzZloze(z, ile) {
+  const zasob = z.def.zasob;
+  const kolor = USTAWIENIA.zasoby[zasob].kolor;
+
+  z.zycie -= ile;
+  z.drzenie = 1;
+  odpryski(z.x, z.y, kolor, 4);
+  dzwiek('stuk');
+
+  // Nagroda przy KAŻDYM ciosie. To jedna linijka, a jest silnikiem całej
+  // dynamiki gry: zamiast jednej nagrody na trzy sekundy gracz dostaje
+  // cztery na sekundę. Bez tego rąbanie jest czynnością bierną — stoisz
+  // i patrzysz, jak pasek się opróżnia.
+  dodajZasob(zasob, z.def.lupNaCios, z.x, z.y - z.promien * 0.4);
+
+  if (z.zycie <= 0) {
+    z.wykopane = true;
+    z.wracaZa = z.def.odrasta;
+    const premia = lupZaRozbicie(z);
+    dodajZasob(zasob, premia, z.x, z.y - 10);
+    napis(z.x, z.y - 24, `+${premia}`, kolor);
+    odpryski(z.x, z.y, kolor, 18);
+    stan.zamrozenie = USTAWIENIA.hitStop;
+    dzwiek('lup');
+  }
+}
+
+/* Premia za rozbicie rośnie z poziomem narzędzia — to jest widoczna
+   część rozwoju postaci. Samo "szybciej rozbijasz" gracz przeoczy;
+   "sypie się dwa razy więcej kamienia" widzi natychmiast. */
+function lupZaRozbicie(z) {
+  const n = USTAWIENIA.narzedzia[z.def.narzedzie];
+  return z.def.lupZaRozbicie + n.bonusLupu * (stan.narzedzia[z.def.narzedzie] - 1);
+}
+
+function dodajZasob(nazwa, ile, x, y) {
+  if (ile <= 0) return;
+  stan.zasoby[nazwa] = (stan.zasoby[nazwa] || 0) + ile;
+  stan.blyskZasobu[nazwa] = 1;    // do podświetlenia licznika w HUD
+  stan.nagrody++;                 // licznik do mierzenia dynamiki (patrz bot)
+  if (x !== undefined) lecacyLup(x, y, nazwa);
+}
+
+function obijGracza(ile) {
+  const g = stan.gracz;
+  g.zycie -= ile;
+  g.ostatnioOberwal = 0;
+  stan.trzesienie = 7 * mnoznikRuchu();
+  dzwiek('auc');
+  if (g.zycie <= 0) polegl();
+}
+
+/* Śmierć jest łagodna: wracasz na start z pełnym życiem i NIE tracisz
+   zasobów. To demo dla dzieciaka, nie dark souls. */
+function polegl() {
+  const K = USTAWIENIA.kafel;
+  const g = stan.gracz;
+  g.zycie = USTAWIENIA.gracz.maxZycie;
+  g.x = K * 0.5; g.y = K * 0.72;
+  g.ostatnioOberwal = 0;
+  napis(g.x, g.y - 40, 'Ups! Wracasz na start', '#ff6b6b');
+  stan.trzesienie = 14 * mnoznikRuchu();
+}
+
+</script>
+<script>
+/* ---------- js/wrogowie.js ---------- */
+/* ============================================================
+   WROGOWIE — szlamy i bossowie
+   ============================================================
+   Sztuczna inteligencja szlama ma dokładnie dwa stany:
+     SPACER — łazi sobie w losową stronę,
+     POGOŃ  — widzi gracza, więc leci prosto na niego.
+   To wszystko. Serio, tyle wystarcza, żeby coś wyglądało na "żywe".
+   Najlepsze AI w grach to prawie zawsze najprostsze AI.
+
+   Boss to ten sam kod z innymi liczbami i trzema dodatkami: śpi do czasu
+   wykupienia planety, nie odrasta po śmierci i trzyma zamknięty portal.
+   Dopisanie osobnej klasy dla bossa byłoby tu czystą stratą.
+   ============================================================ */
+
+function zaludnij(swiat, kafel) {
+  // Kafel startowy zostaje bezpieczny — nikt nie lubi ginąć w 3. sekundzie gry.
+  if (kafel.pierscien === 0) return;
+
+  const ile = swiat.cfg.wrogowie;
+  const K = USTAWIENIA.kafel;
+  const rnd = losowarka(swiat.numer * 7717 + (kafel.kx + 50) * 131 + (kafel.ky + 50) * 17);
+
+  for (let i = 0; i < ile; i++) {
+    swiat.wrogowie.push(stworzWroga(
+      kafel.x + 60 + rnd() * (K - 120),
+      kafel.y + 60 + rnd() * (K - 120),
+      USTAWIENIA.szlam,
+      swiat.numer
+    ));
+  }
+}
+
+/* Statystyki wyliczamy RAZ, przy tworzeniu wroga, i zapisujemy w nim samym.
+   Alternatywa — liczenie mnożników przy każdej klatce — byłaby wolniejsza
+   i, co gorsza, zmiana poziomu trudności w trakcie zmieniałaby siłę wrogów,
+   którzy już stoją na planszy. Tak jest uczciwiej. */
+function stworzWroga(x, y, def, planeta) {
+  const t = USTAWIENIA.trudnosc[stan.trudnosc] || USTAWIENIA.trudnosc.normalny;
+  const m = 1 + planeta * def.naPlanete;
+  const zycie = Math.round(def.zycie * m * t.zycieWrogow);
+
+  return {
+    x, y,
+    domX: x, domY: y,         // "dom" — dalej niż smycz nie odejdzie
+    def,
+    bossem: def === USTAWIENIA.boss,
+    promien: def.promien,
+    zycie,
+    maxZycie: zycie,
+    obrazenia: def.obrazenia * m * t.obrazeniaWrogow,
+    predkosc: def.predkosc * t.predkoscWrogow,
+    zywy: true,
+    spi: false,               // bossowie śpią do wykupienia planety
+    wracaZa: 0,
+    celX: x, celY: y,         // dokąd łazi podczas spaceru
+    doNowegoCelu: 0,
+    ostatniCios: 0,
+    skok: Math.random() * 6,  // przesunięcie fazy animacji, żeby nie skakały równo
+    drzenie: 0,
+    goni: false,
+  };
+}
+
+/* Boss śpi DOKŁADNIE na portalu od pierwszej sekundy — widoczny cel, którego
+   nie trzeba nikomu tłumaczyć słowami.
+
+   Stał kiedyś 58 px obok i to był błąd: wokół portalu jest strefa wolna od
+   złóż, ale 58 px dalej już nie — więc kryształ potrafił wyrosnąć na bossie
+   i zasłonić go tak, że na ekranie zostawał sam pasek życia. */
+function stworzBossa(swiat) {
+  const boss = stworzWroga(
+    swiat.portal.x, swiat.portal.y,
+    USTAWIENIA.boss, swiat.numer
+  );
+  boss.spi = true;
+  swiat.boss = boss;
+  swiat.wrogowie.push(boss);
+  return boss;
+}
+
+function aktualizujWrogow(dt) {
+  const g = stan.gracz;
+  const smycz = USTAWIENIA.kafel * 0.45;   // patrz komentarz przy `kafleWokol`
+
+  for (const w of stan.swiat.wrogowie) {
+    w.drzenie = Math.max(0, w.drzenie - dt * 5);
+
+    // --- boss śpi, dopóki planeta nie jest wykupiona ---
+    if (w.spi) {
+      w.skok += dt * 1.2;                  // powolne oddychanie przez sen
+      if (wszystkoOdblokowane(stan.swiat)) obudzBossa(w);
+      continue;
+    }
+
+    // --- martwy: odlicza do powrotu (boss nie wraca nigdy) ---
+    if (!w.zywy) {
+      if (!w.def.odrasta) continue;
+      w.wracaZa -= dt;
+      if (w.wracaZa <= 0) {
+        w.zywy = true;
+        w.zycie = w.maxZycie;
+        w.x = w.domX; w.y = w.domY;
+      }
+      continue;
+    }
+
+    w.skok += dt * 6;
+    w.ostatniCios += dt;
+
+    const doGracza = odleglosc(w.x, w.y, g.x, g.y);
+    w.goni = doGracza < w.def.zasiegPogoni;
+
+    let celX, celY;
+    if (w.goni) {
+      celX = g.x; celY = g.y;
+    } else {
+      // SPACER: co kilka sekund losujemy nowy punkt w pobliżu domu.
+      w.doNowegoCelu -= dt;
+      if (w.doNowegoCelu <= 0) {
+        w.doNowegoCelu = 1.5 + Math.random() * 2.5;
+        const kat = Math.random() * Math.PI * 2;
+        const r = Math.random() * smycz;
+        w.celX = w.domX + Math.cos(kat) * r;
+        w.celY = w.domY + Math.sin(kat) * r;
+      }
+      celX = w.celX; celY = w.celY;
+    }
+
+    const dx = celX - w.x, dy = celY - w.y;
+    const d = Math.hypot(dx, dy);
+    if (d > 4) {
+      const predkosc = w.predkosc * (w.goni ? 1 : 0.5);
+      let nx = w.x + (dx / d) * predkosc * dt;
+      let ny = w.y + (dy / d) * predkosc * dt;
+
+      // Smycz: nawet w pogoni szlam nie pogoni Cię przez pół planety.
+      // Bez tego wszystkie potwory ze świata zebrałyby się w jedną kulę
+      // przy kaflu startowym i gra rozsypałaby się po pięciu minutach.
+      // Boss jest wyjątkiem — jego smycz to cała planeta, bo to jego walka.
+      const zasieg = w.bossem ? USTAWIENIA.kafel * 3 : smycz;
+      if (odleglosc(nx, ny, w.domX, w.domY) > zasieg) {
+        const kx = nx - w.domX, ky = ny - w.domY;
+        const kd = Math.hypot(kx, ky);
+        nx = w.domX + (kx / kd) * zasieg;
+        ny = w.domY + (ky / kd) * zasieg;
+      }
+      // Wrogowie też nie wchodzą na nieodblokowaną ziemię.
+      if (mozeStac(stan.swiat, nx, w.y, w.promien)) w.x = nx;
+      if (mozeStac(stan.swiat, w.x, ny, w.promien)) w.y = ny;
+    }
+
+    // --- cios w gracza ---
+    if (doGracza < w.promien + g.promien + 4 && w.ostatniCios >= w.def.coIleBije) {
+      w.ostatniCios = 0;
+      obijGracza(w.obrazenia);
+    }
+  }
+}
+
+function obudzBossa(w) {
+  w.spi = false;
+  w.domX = w.x; w.domY = w.y;
+  stan.trzesienie = 22 * mnoznikRuchu();
+  napis(w.x, w.y - w.promien - 26, 'OBUDZIŁ SIĘ!', '#ff6b6b');
+  odpryski(w.x, w.y, '#c05a9e', 30);
+  dzwiek('auc');
+}
+
+function zadajWrogowi(w, ile) {
+  if (w.spi) return;                       // śpiącego bossa nie da się zajechać
+  w.zycie -= ile;
+  w.drzenie = 1;
+  odpryski(w.x, w.y, w.bossem ? '#c05a9e' : '#7ee08a', w.bossem ? 8 : 5);
+
+  if (w.zycie <= 0) {
+    w.zywy = false;
+    w.wracaZa = w.def.odrasta;
+    dodajZasob('zloto', w.def.lupZloto, w.x, w.y);
+    napis(w.x, w.y - 18, `+${w.def.lupZloto}`, '#f2c14e');
+    odpryski(w.x, w.y, w.bossem ? '#c05a9e' : '#7ee08a', w.bossem ? 46 : 16);
+    dzwiek('lup');
+
+    if (w.bossem) {
+      stan.zamrozenie = 0.18;              // dłuższy hit-stop = cios ma wagę
+      stan.trzesienie = 26 * mnoznikRuchu();
+      napis(w.x, w.y - 46, 'PORTAL OTWARTY!', '#7fd4ff');
+      dzwiek('kup');
+    }
+  }
+}
+
+</script>
+<script>
+/* ---------- js/gra.js ---------- */
+/* ============================================================
+   GRA — pętla główna, zapis, sklep, portal
+   ============================================================
+   Każda gra świata sprowadza się do jednej pętli powtarzanej
+   ~60 razy na sekundę:
+
+       1. sprawdź, co wciska gracz
+       2. przelicz świat o kawałek czasu do przodu
+       3. narysuj wszystko od nowa
+
+   Szukaj funkcji `klatka` na dole pliku. To jest to serce.
+   ============================================================ */
+
+const KLUCZ_ZAPISU = 'moj-maly-wszechswiat-v1';
+
+const stan = {
+  planeta: 0,
+  trudnosc: 'latwy',   // domyślnie najłagodniej — celujemy w dzieciaka
+  zasoby: { drewno: 0, kamien: 0, zloto: 0, krysztal: 0 },
+  narzedzia: { siekiera: 1, kilof: 1, miecz: 1 },
+  // Osobno dla każdej planety. Liczba brana z ustawień, nie wpisana ręcznie —
+  // inaczej dołożenie planety po cichu psuje zapis.
+  odblokowane: USTAWIENIA.planety.map(() => ({})),
+
+  gracz: null,
+  swiat: null,
+
+  odpryski: [],
+  napisy: [],
+  lecacyLup: [],       // surowce lecące z ziemi do liczników w HUD
+  blyskZasobu: {},
+  trzesienie: 0,
+  zamrozenie: 0,       // hit-stop: na tyle sekund świat zamiera po rozbiciu
+  nagrody: 0,          // ile razy gracz coś dostał — miara dynamiki gry
+  blokada: null,       // komunikat "za słabe narzędzie"
+  kafelObok: null,     // kafel do kupienia, przy którym stoimy
+  cel: null,           // dokąd wskazuje strzałka (patrz celGracza)
+  doCelu: 0,
+  pauza: true,         // do czasu kliknięcia "Graj"
+  doZapisu: 0,
+};
+
+/* ---------------- ZAPIS ---------------- */
+
+function zapisz() {
+  try {
+    localStorage.setItem(KLUCZ_ZAPISU, JSON.stringify({
+      planeta: stan.planeta,
+      zasoby: stan.zasoby,
+      narzedzia: stan.narzedzia,
+      odblokowane: stan.odblokowane,
+      dzwiek: dzwiekWlaczony,
+      trudnosc: stan.trudnosc,
+    }));
+  } catch (e) {
+    // Tryb prywatny w niektórych przeglądarkach blokuje localStorage.
+    // Gra ma wtedy działać dalej, tylko bez pamiętania postępu.
+  }
+}
+
+function wczytaj() {
+  try {
+    const dane = JSON.parse(localStorage.getItem(KLUCZ_ZAPISU) || 'null');
+    if (!dane) return false;
+    Object.assign(stan.zasoby, dane.zasoby || {});
+    Object.assign(stan.narzedzia, dane.narzedzia || {});
+    stan.planeta = Math.min(dane.planeta || 0, USTAWIENIA.planety.length - 1);
+    // Wyciszenie musi przeżyć odświeżenie. Gra, która co F5 znowu zaczyna
+    // pikać, jest wyłączana przez rodzica po drugim razie.
+    if (dane.dzwiek === false) dzwiekWlaczony = false;
+    if (USTAWIENIA.trudnosc[dane.trudnosc]) stan.trudnosc = dane.trudnosc;
+    // Zapis może pochodzić z wersji, która miała mniej planet.
+    for (let i = 0; i < USTAWIENIA.planety.length; i++) {
+      stan.odblokowane[i] = (dane.odblokowane && dane.odblokowane[i]) || {};
+    }
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
+function odNowa() {
+  if (!confirm('Skasować postęp i zacząć od zera?')) return;
+  localStorage.removeItem(KLUCZ_ZAPISU);
+  location.reload();
+}
+
+/* ---------------- PLANETY ---------------- */
+
+function wejdzNaPlanete(numer) {
+  stan.planeta = numer;
+  if (!stan.odblokowane[numer]) stan.odblokowane[numer] = {};
+  stan.swiat = zbudujPlanete(numer, stan.odblokowane[numer]);
+  stan.gracz = stan.gracz || stworzGracza();
+  const K = USTAWIENIA.kafel;
+  stan.gracz.x = K * 0.5;
+  stan.gracz.y = K * 0.72;
+  stan.gracz.zycie = USTAWIENIA.gracz.maxZycie;
+  kamera.x = stan.gracz.x;
+  kamera.y = stan.gracz.y;
+  stan.odpryski.length = 0;
+  stan.napisy.length = 0;
+  document.getElementById('nazwa-planety').textContent = stan.swiat.cfg.nazwa;
+}
+
+/* Portal działa dopiero, gdy planeta jest wykupiona ORAZ boss leży.
+   Dwa warunki, jedno miejsce — inaczej rysowanie i logika prędzej czy
+   później zaczęłyby twierdzić co innego. */
+function portalGotowy(s) {
+  return wszystkoOdblokowane(s) && !(s.boss && s.boss.zywy);
+}
+
+function sprawdzPortal() {
+  const p = stan.swiat.portal;
+  if (!portalGotowy(stan.swiat)) return;
+  if (odleglosc(stan.gracz.x, stan.gracz.y, p.x, p.y) > p.promien + stan.gracz.promien) return;
+
+  const nastepna = stan.planeta + 1;
+  stan.pauza = true;
+  dzwiek('portal');
+
+  if (nastepna >= USTAWIENIA.planety.length) {
+    pokazEkran(
+      '🏆 Przeleciałeś cały wszechświat!',
+      'Wszystkie planety zdobyte. Koniec gry?<br>Nie do końca — nowa planeta to jeden skopiowany blok w pliku <b>js/ustawienia.js</b>. Otwórz go i zrób sobie czwartą.',
+      'Graj dalej'
+    );
+    return;
+  }
+
+  zapisz();
+  pokazEkran(
+    '🌀 Portal otwarty!',
+    `Lecisz na: <b>${USTAWIENIA.planety[nastepna].nazwa}</b><br>Zasoby i narzędzia lecą z Tobą.`,
+    'Lecimy!',
+    () => { wejdzNaPlanete(nastepna); zapisz(); }
+  );
+}
+
+/* ---------------- KUPOWANIE KAFLI ---------------- */
+
+/* Szuka kafla do kupienia, przy którego krawędzi stoimy.
+   Liczymy odległość do PROSTOKĄTA, nie do jego środka — inaczej
+   trzeba by wleźć na środek kafla, na który nie da się wejść. */
+function znajdzKafelObok() {
+  const g = stan.gracz;
+  const K = USTAWIENIA.kafel;
+  let najlepszy = null, naj = 70;   // px od krawędzi
+
+  for (const kafel of kupowalne(stan.swiat)) {
+    const dx = Math.max(kafel.x - g.x, 0, g.x - (kafel.x + K));
+    const dy = Math.max(kafel.y - g.y, 0, g.y - (kafel.y + K));
+    const d = Math.hypot(dx, dy);
+    if (d < naj) { naj = d; najlepszy = kafel; }
+  }
+  return najlepszy;
+}
+
+function kupKafel() {
+  const kafel = stan.kafelObok;
+  if (!kafel || !staNasKafel(kafel)) return;
+
+  for (const z in kafel.cena) stan.zasoby[z] -= kafel.cena[z];
+
+  kafel.odblokowany = true;
+  stan.odblokowane[stan.planeta][kafel.klucz] = true;
+  zaludnij(stan.swiat, kafel);
+
+  const K = USTAWIENIA.kafel;
+  napis(kafel.x + K / 2, kafel.y + K / 2, 'Nowa ziemia!', '#f2c14e');
+  odpryski(kafel.x + K / 2, kafel.y + K / 2, '#f2c14e', 26);
+  stan.trzesienie = 8 * mnoznikRuchu();
+  dzwiek('kup');
+  zapisz();
+}
+
+/* ---------------- ULEPSZANIE NARZĘDZI ---------------- */
+
+function ulepsz(nazwa) {
+  const def = USTAWIENIA.narzedzia[nazwa];
+  const poziom = stan.narzedzia[nazwa];
+  if (poziom >= def.maxPoziom) return;
+
+  const cena = USTAWIENIA.cenaUlepszenia(poziom);
+  for (const z in cena) if ((stan.zasoby[z] || 0) < cena[z]) return;
+  for (const z in cena) stan.zasoby[z] -= cena[z];
+
+  stan.narzedzia[nazwa] = poziom + 1;
+  napis(stan.gracz.x, stan.gracz.y - 44, `${def.nazwa} poz. ${poziom + 1}!`, '#8ff0a4');
+  odpryski(stan.gracz.x, stan.gracz.y, '#8ff0a4', 18);
+  dzwiek('kup');
+  zapisz();
+  odswiezSklep();
+}
+
+let podpisSklepu = '';
+
+function odswiezSklep() {
+  // Sklep przerysowuje się tylko wtedy, gdy naprawdę coś się zmieniło.
+  // Bez tego przepisywalibyśmy innerHTML sześciu elementów 60 razy na
+  // sekundę — a przeglądarka za każdym razem parsuje ten HTML od nowa.
+  const podpis = JSON.stringify(stan.narzedzia) + JSON.stringify(stan.zasoby);
+  if (podpis === podpisSklepu) return;
+  podpisSklepu = podpis;
+
+  for (const nazwa in USTAWIENIA.narzedzia) {
+    const def = USTAWIENIA.narzedzia[nazwa];
+    const poziom = stan.narzedzia[nazwa];
+    const wiersz = document.querySelector(`[data-narzedzie="${nazwa}"]`);
+    const maks = poziom >= def.maxPoziom;
+    const cena = maks ? null : USTAWIENIA.cenaUlepszenia(poziom);
+
+    wiersz.querySelector('.u-poziom').textContent = `poz. ${poziom}${maks ? ' (MAX)' : ''}`;
+    wiersz.querySelector('.u-moc').textContent = `${obrazenia(nazwa)} obrażeń`;
+
+    const przycisk = wiersz.querySelector('button');
+    if (maks) {
+      przycisk.textContent = 'MAX';
+      przycisk.disabled = true;
+      continue;
+    }
+    const stac = Object.keys(cena).every(z => cena[z] === 0 || (stan.zasoby[z] || 0) >= cena[z]);
+    przycisk.disabled = !stac;
+    przycisk.innerHTML = Object.keys(cena)
+      .filter(z => cena[z] > 0)
+      .map(z => `${USTAWIENIA.zasoby[z].ikona}${cena[z]}`)
+      .join(' ');
+  }
+}
+
+/* ---------------- CEL: JEDNA RZECZ DO ZROBIENIA ---------------- */
+
+/* Gra wymagała wcześniej PLANU: przeczytaj cenę, ustal czego brakuje,
+   znajdź to na mapie, nazbieraj, wróć. Cztery kroki i cztery napisy —
+   pięciolatek tego nie zrobi. Ta funkcja sprowadza całą grę do jednego
+   zdania bez słów: "idź tam". Starszy gracz strzałkę zignoruje.
+
+   Kolejność jest priorytetem, nie przypadkiem. */
+function celGracza() {
+  const s = stan.swiat;
+  const g = stan.gracz;
+  const K = USTAWIENIA.kafel;
+
+  // 1. Obudzony boss jest ważniejszy niż cokolwiek innego.
+  if (s.boss && s.boss.zywy && !s.boss.spi) return { x: s.boss.x, y: s.boss.y, ikona: '⚔️' };
+
+  // 2. Planeta wykupiona i boss leży -> portal.
+  if (portalGotowy(s)) return { x: s.portal.x, y: s.portal.y, ikona: '🌀' };
+
+  // 3. Stać nas na jakiś kafel -> idź go kupić.
+  let najlepszy = null, naj = Infinity;
+  for (const kafel of kupowalne(s)) {
+    if (!staNasKafel(kafel)) continue;
+    const d = odleglosc(g.x, g.y, kafel.x + K / 2, kafel.y + K / 2);
+    if (d < naj) { naj = d; najlepszy = kafel; }
+  }
+  if (najlepszy) return { x: najlepszy.x + K / 2, y: najlepszy.y + K / 2, ikona: '🔓' };
+
+  // 4. Nie stać -> najbliższe złoże surowca, którego brakuje najbardziej.
+  const brakuje = new Set();
+  for (const kafel of kupowalne(s)) {
+    for (const z in kafel.cena) {
+      if (kafel.cena[z] > (stan.zasoby[z] || 0)) brakuje.add(z);
+    }
+  }
+  let zloze = null, najZ = Infinity;
+  for (const kafel of s.kafle.values()) {
+    if (!kafel.odblokowany) continue;
+    for (const z of kafel.zloza) {
+      if (z.wykopane) continue;
+      if (brakuje.size && !brakuje.has(z.def.zasob)) continue;
+      if (stan.narzedzia[z.def.narzedzie] < z.def.minPoziom) continue;
+      const d = odleglosc(g.x, g.y, z.x, z.y);
+      if (d < najZ) { najZ = d; zloze = z; }
+    }
+  }
+  if (zloze) return { x: zloze.x, y: zloze.y, ikona: USTAWIENIA.zasoby[zloze.def.zasob].ikona };
+
+  // 5. Nic nie zostało (wszystko wykopane) — nie pokazujemy nic, zamiast
+  //    wskazywać byle gdzie. Fałszywa strzałka jest gorsza niż jej brak.
+  return null;
+}
+
+/* ---------------- HUD ---------------- */
+
+/* Które liczniki w ogóle pokazywać. Na pierwszej planecie ziemia kosztuje
+   tylko drewno i kamień, więc dwa puste liczniki obok byłyby dla dzieciaka
+   szumem. Pokazujemy to, czego wymaga planeta, plus to, co gracz już ma. */
+function istotneZasoby() {
+  const zestaw = new Set();
+  for (const kafel of stan.swiat.kafle.values()) {
+    if (!kafel.cena) continue;
+    for (const z in kafel.cena) if (kafel.cena[z] > 0) zestaw.add(z);
+  }
+  for (const z in stan.zasoby) if (stan.zasoby[z] > 0) zestaw.add(z);
+  return zestaw;
+}
+
+function zbudujHud() {
+  const pojemnik = document.getElementById('zasoby');
+  pojemnik.innerHTML = '';
+  for (const nazwa in USTAWIENIA.zasoby) {
+    const z = USTAWIENIA.zasoby[nazwa];
+    const el = document.createElement('div');
+    el.className = 'zasob';
+    el.dataset.zasob = nazwa;
+    el.innerHTML = `<span class="ikona">${z.ikona}</span><span class="ile">0</span>`;
+    pojemnik.appendChild(el);
+  }
+
+  const sklep = document.getElementById('lista-ulepszen');
+  sklep.innerHTML = '';
+  for (const nazwa in USTAWIENIA.narzedzia) {
+    const def = USTAWIENIA.narzedzia[nazwa];
+    const el = document.createElement('div');
+    el.className = 'ulepszenie';
+    el.dataset.narzedzie = nazwa;
+    el.innerHTML = `
+      <span class="u-ikona">${def.ikona}</span>
+      <span class="u-opis"><b>${def.nazwa}</b><span class="u-poziom"></span><span class="u-moc"></span></span>
+      <button type="button"></button>`;
+    el.querySelector('button').addEventListener('click', () => ulepsz(nazwa));
+    sklep.appendChild(el);
+  }
+  odswiezSklep();
+}
+
+function odswiezHud(dt) {
+  const istotne = istotneZasoby();
+  let zmianaWidocznosci = false;
+
+  for (const nazwa in USTAWIENIA.zasoby) {
+    const el = document.querySelector(`.zasob[data-zasob="${nazwa}"]`);
+    const pokaz = istotne.has(nazwa);
+    if (el.hidden === pokaz) { el.hidden = !pokaz; zmianaWidocznosci = true; }
+    if (!pokaz) continue;
+    el.querySelector('.ile').textContent = stan.zasoby[nazwa] || 0;
+    // Krótki błysk po zdobyciu — oko samo łapie, co się właśnie zmieniło.
+    const b = stan.blyskZasobu[nazwa] || 0;
+    if (b > 0) {
+      el.classList.add('blysk');
+      stan.blyskZasobu[nazwa] = Math.max(0, b - dt * 3);
+    } else {
+      el.classList.remove('blysk');
+    }
+  }
+
+  // Licznik zmienił widoczność -> lecący łup musi poznać nowe cele lotu.
+  if (zmianaWidocznosci) odswiezPozycjeLicznikow();
+
+  const g = stan.gracz;
+  const ulamek = Math.max(0, g.zycie / USTAWIENIA.gracz.maxZycie);
+  const pasek = document.getElementById('zycie-pasek');
+  pasek.style.width = ulamek * 100 + '%';
+  // Kolor niesie informację szybciej niż długość paska: czerwony pasek
+  // przy pełnym życiu mówiłby "uciekaj!", choć nic się nie dzieje.
+  pasek.style.background = ulamek > 0.6 ? '#5ad46f' : ulamek > 0.3 ? '#f2c14e' : '#ff5f5f';
+
+  let odblokowanych = 0, wszystkich = 0;
+  for (const k of stan.swiat.kafle.values()) { wszystkich++; if (k.odblokowany) odblokowanych++; }
+  document.getElementById('postep-kafli').textContent = `${odblokowanych}/${wszystkich} ziemi`;
+
+  // przycisk "kup kafel"
+  const przycisk = document.getElementById('przycisk-kup');
+  const kafel = stan.kafelObok;
+  if (kafel) {
+    const stac = staNasKafel(kafel);
+    przycisk.hidden = false;
+    przycisk.disabled = !stac;
+    przycisk.textContent = stac ? '🔓 Odblokuj tę ziemię' : '🔒 Za mało zasobów';
+  } else {
+    przycisk.hidden = true;
+  }
+
+  document.getElementById('podpowiedz').textContent = podpowiedz();
+  odswiezSklep();
+}
+
+/* Jedno zdanie mówiące "co teraz". Gra bez tego nie jest trudniejsza —
+   jest tylko bardziej irytująca. */
+function podpowiedz() {
+  if (stan.blokada) return '⚠️ ' + stan.blokada;
+  // Kolejność MUSI się zgadzać z `portalGotowy`, inaczej pasek u góry mówi
+  // "wejdź w portal", a portal w tym samym momencie mówi "pokonaj bossa".
+  const boss = stan.swiat.boss;
+  if (boss && boss.zywy && !boss.spi) return '⚔️ Boss się obudził! Ubij go, żeby otworzyć portal.';
+  if (portalGotowy(stan.swiat)) return '🌀 Cała planeta Twoja! Wejdź w portal na środku.';
+  if (stan.kafelObok) {
+    return staNasKafel(stan.kafelObok)
+      ? '✅ Stoisz przy nowej ziemi — kliknij "Odblokuj"!'
+      : '⛏️ Brakuje surowców na tę ziemię. Rąb dalej!';
+  }
+  const suma = Object.values(stan.zasoby).reduce((a, b) => a + b, 0);
+  if (suma === 0) return '🪓 Podejdź do drzewa — ludzik sam zacznie rąbać.';
+  return '🚩 Idź do przerywanej ramki, żeby kupić nową ziemię.';
+}
+
+/* ---------------- POZIOM TRUDNOŚCI ---------------- */
+
+function zbudujWyborTrudnosci() {
+  const box = document.getElementById('wybor-trudnosci');
+  box.innerHTML = '';
+  for (const klucz in USTAWIENIA.trudnosc) {
+    const t = USTAWIENIA.trudnosc[klucz];
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'trudnosc' + (stan.trudnosc === klucz ? ' wybrany' : '');
+    b.innerHTML = `<span class="t-ikona">${t.ikona}</span><span>${t.nazwa}</span>`;
+    b.addEventListener('click', () => ustawTrudnosc(klucz));
+    box.appendChild(b);
+  }
+}
+
+function ustawTrudnosc(klucz) {
+  if (!USTAWIENIA.trudnosc[klucz]) return;
+  stan.trudnosc = klucz;
+  zbudujWyborTrudnosci();
+  zapisz();
+  // Wrogowie mają statystyki policzone raz, przy tworzeniu — więc planetę
+  // trzeba zbudować od nowa, inaczej zmiana nie ruszyłaby tych, którzy
+  // już stoją na planszy.
+  if (stan.swiat) wejdzNaPlanete(stan.planeta);
+}
+
+/* ---------------- EKRANY ---------------- */
+
+function pokazEkran(tytul, tresc, przyciskTekst, poKliknieciu, zTrudnoscia) {
+  const ekran = document.getElementById('ekran');
+  ekran.querySelector('h1').innerHTML = tytul;
+  ekran.querySelector('p').innerHTML = tresc;
+  const wybor = document.getElementById('wybor-trudnosci');
+  wybor.hidden = !zTrudnoscia;
+  if (zTrudnoscia) zbudujWyborTrudnosci();
+  const b = document.getElementById('ekran-dalej');
+  b.textContent = przyciskTekst;
+  ekran.hidden = false;
+  stan.pauza = true;
+
+  b.onclick = () => {
+    ekran.hidden = true;
+    stan.pauza = false;
+    obudzDzwiek();
+    if (poKliknieciu) poKliknieciu();
+  };
+}
+
+/* ---------------- PĘTLA GŁÓWNA ---------------- */
+
+let poprzedniCzas = 0;
+
+function klatka(znacznik) {
+  requestAnimationFrame(klatka);
+
+  const czas = znacznik / 1000;
+  // dt = ile sekund minęło od poprzedniej klatki. Wszystkie ruchy mnożymy
+  // przez dt, dzięki czemu gra chodzi tak samo szybko na 60 Hz i na 144 Hz.
+  // Przycinamy do 0.05 s, bo po powrocie z innej karty dt byłoby ogromne
+  // i gracz przeteleportowałby się przez pół planety.
+  let dt = Math.min(czas - poprzedniCzas, 0.05);
+  poprzedniCzas = czas;
+  if (dt < 0) dt = 0;
+
+  // HIT-STOP: przez ułamek sekundy po rozbiciu złoża świat stoi, ale obraz
+  // leci dalej. Mózg czyta tę mikroprzerwę jako siłę uderzenia — to ten sam
+  // trik, którym bijatyki od trzydziestu lat sprzedają wrażenie ciężaru.
+  // Zamrażamy TYLKO symulację; efekty i kamera muszą chodzić, inaczej
+  // zamiast ciosu z impetem wychodzi zacinająca się gra.
+  const zamrozony = stan.zamrozenie > 0;
+  if (zamrozony) stan.zamrozenie -= dt;
+
+  if (!stan.pauza && !zamrozony) {
+    aktualizujGracza(dt);
+    aktualizujWrogow(dt);
+    odrastanie(dt);
+    stan.kafelObok = znajdzKafelObok();
+    // Cel przeliczamy co 10 klatek — `kupowalne()` tworzy nową tablicę,
+    // a sześć razy na sekundę wystarcza w zupełności, żeby strzałka
+    // wyglądała na natychmiastową.
+    if (--stan.doCelu <= 0) { stan.doCelu = 10; stan.cel = celGracza(); }
+    sprawdzPortal();
+
+    stan.doZapisu += dt;
+    if (stan.doZapisu > 3) { stan.doZapisu = 0; zapisz(); }
+  }
+
+  aktualizujEfekty(dt);
+  aktualizujKamere(dt);
+  stan.swiat.portal.obrot += dt;
+  rysuj(czas);
+  odswiezHud(dt);
+}
+
+/* Wykopane złoża wracają po chwili — inaczej planeta zrobiłaby się
+   pusta i gracz utknąłby bez surowców na kolejny kafel. */
+function odrastanie(dt) {
+  for (const kafel of stan.swiat.kafle.values()) {
+    if (!kafel.odblokowany) continue;
+    for (const z of kafel.zloza) {
+      z.drzenie = Math.max(0, z.drzenie - dt * 5);
+      if (!z.wykopane) continue;
+      z.wracaZa -= dt;
+      if (z.wracaZa <= 0) {
+        z.wykopane = false;
+        z.zycie = z.maxZycie;
+      }
+    }
+  }
+}
+
+/* ---------------- START ---------------- */
+
+function start() {
+  dopasujPlotno();
+  const bylZapis = wczytaj();
+  wejdzNaPlanete(stan.planeta);
+  zbudujHud();
+  odswiezPozycjeLicznikow();   // dopiero teraz liczniki istnieją w HTML
+
+  document.getElementById('przycisk-kup').addEventListener('click', kupKafel);
+  document.getElementById('przycisk-reset').addEventListener('click', odNowa);
+
+  const przyciskDzwieku = document.getElementById('przycisk-dzwiek');
+  przyciskDzwieku.textContent = dzwiekWlaczony ? '🔊' : '🔇';
+  przyciskDzwieku.addEventListener('click', e => {
+    dzwiekWlaczony = !dzwiekWlaczony;
+    e.currentTarget.textContent = dzwiekWlaczony ? '🔊' : '🔇';
+    obudzDzwiek();
+    zapisz();
+  });
+
+  // Spacja jako skrót do kupowania ziemi — na klawiaturze wygodniejsza
+  // niż celowanie myszką w przycisk.
+  window.addEventListener('keydown', e => {
+    if (e.code === 'Space' && !stan.pauza) { e.preventDefault(); kupKafel(); }
+  });
+
+  const sklep = document.getElementById('sklep');
+  document.getElementById('przycisk-sklep').addEventListener('click', () => {
+    sklep.hidden = !sklep.hidden;
+    obudzDzwiek();
+  });
+  document.getElementById('zamknij-sklep').addEventListener('click', () => { sklep.hidden = true; });
+
+  pokazEkran(
+    'Mój Mały Wszechświat',
+    bylZapis
+      ? 'Witaj z powrotem! Twój postęp czeka.'
+      : '<span class="jak">🕹️ Chodź strzałkami albo WSAD</span>' +
+        '<span class="jak">🪓 Podejdź blisko — ludzik sam rąbie</span>' +
+        '<span class="jak">🔓 Kupuj ziemię, ubij bossa, leć dalej</span>',
+    bylZapis ? 'Gram dalej' : 'Graj!',
+    null,
+    true            // pokaż wybór poziomu trudności
+  );
+
+  requestAnimationFrame(klatka);
+}
+
+start();
+
+</script>
+</body>
+</html>
